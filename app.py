@@ -115,15 +115,3 @@ else:
     st.session_state.current_page = "login"
     st.rerun()
 
-"""
-app.py
-======
-Main entry point — handles page routing based on session state.
-
-Flow:
-  Not logged in       →  Login / Register page
-  Logged in (staff)   →  Main Dashboard hub → individual modules
-  Logged in (customer)→  Main Dashboard hub → customer view
-
-Run with:  streamlit run app.py
-"""
