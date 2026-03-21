@@ -109,21 +109,90 @@ elif page == "demand_forecast":
         '<div class="footer">Sunrise Supermarket · Demand Forecasting · IT2021 AIML Project · SLIIT</div>',
         unsafe_allow_html=True,
     )
+# ── Route: customer dashboard ─────────────────────────────────────────────────
+elif page == "customer_dashboard":
+    from ui.styles import inject_styles
+    from services.auth_service import get_current_user, logout, get_user_role
+    inject_styles()
 
+    user = get_current_user()
+    if not user or user.get('role') != 'customer':
+        st.session_state.current_page = "main_dashboard"
+        st.rerun()
+
+    if st.button("← Back", key="back_customer"):
+        st.session_state.current_page = "main_dashboard"
+        st.rerun()
+
+    from pages.customer_dashboard import show_customer_dashboard
+    show_customer_dashboard(user.get('customer_id'))
+# ── Route: loyalty module ─────────────────────────────────────────────────────
+elif page == "loyalty":
+    from ui.styles import inject_styles
+    from services.auth_service import get_current_user, logout
+    inject_styles()
+
+    col_back, col_title, col_user = st.columns([1, 5, 1])
+    with col_back:
+        if st.button("← Hub", key="back_loyalty"):
+            st.session_state.current_page = "main_dashboard"
+            st.rerun()
+    with col_title:
+        st.markdown(
+            '<p class="main-header">🎁 Smart Loyalty & Promotions</p>',
+            unsafe_allow_html=True
+        )
+        st.markdown(
+            '<p class="sub-header">Customer segmentation, personalised offers & email campaigns</p>',
+            unsafe_allow_html=True
+        )
+    with col_user:
+        user = get_current_user()
+        if user:
+            st.caption(f"👤 {user.get('username','').capitalize()}")
+        if st.button("Logout", key="loyalty_logout"):
+            logout()
+
+    st.markdown("---")
+
+    from pages.loyalty_home      import show_home
+    from pages.loyalty_segments  import show_segments
+    from pages.loyalty_campaigns import show_promotions
+    from pages.loyalty_history   import show_email_history
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🏠 Overview",
+        "👥 Customer Segments",
+        "🎯 Campaign Builder",
+        "📧 Email History"
+    ])
+    with tab1:
+        show_home()
+    with tab2:
+        show_segments()
+    with tab3:
+        show_promotions()
+    with tab4:
+        show_email_history()
+
+    st.markdown(
+        '<div class="footer">Sunrise Supermarket · Smart Loyalty & Promotions · '
+        'IT24100971 · SLIIT</div>',
+        unsafe_allow_html=True,
+    )
 # ── Fallback ───────────────────────────────────────────────────────────────────
 else:
     st.session_state.current_page = "login"
     st.rerun()
 
-"""
-app.py
-======
-Main entry point — handles page routing based on session state.
+#
+#app.py
+#======
+#Main entry point — handles page routing based on session state.
 
-Flow:
-  Not logged in       →  Login / Register page
-  Logged in (staff)   →  Main Dashboard hub → individual modules
-  Logged in (customer)→  Main Dashboard hub → customer view
+#Flow:
+ # Not logged in       →  Login / Register page
+  #Logged in (staff)   →  Main Dashboard hub → individual modules
+  #Logged in (customer)→  Main Dashboard hub → customer view
 
-Run with:  streamlit run app.py
-"""
+#Run with:  streamlit run app.py

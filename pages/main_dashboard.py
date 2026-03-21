@@ -9,8 +9,6 @@ from __future__ import annotations
 import streamlit as st
 from ui.styles import inject_styles
 from services.auth_service import require_auth, get_current_user, get_user_role, logout
-
-
 def render_main_dashboard() -> None:
     inject_styles()
     require_auth()
@@ -108,7 +106,7 @@ def render_main_dashboard() -> None:
                         "for customers.",
                 "page": "loyalty",
                 "color": "#0891B2",
-                "ready": False,
+                "ready": True,
             },
         ]
 
@@ -147,15 +145,8 @@ def render_main_dashboard() -> None:
 
     # ── Customer view ──────────────────────────────────────────────────────────
     elif role == "customer":
-        st.markdown(f"### 👋 Welcome, {username}!")
-        st.markdown(
-            '<div class="alert-info">Your loyalty dashboard is coming soon.</div>',
-            unsafe_allow_html=True,
-        )
-
-    # ── Footer ─────────────────────────────────────────────────────────────────
-    st.markdown(
-        '<div class="footer">Sunrise Supermarket AI System · '
-        'IT2021 AIML Project · Group 2026-Y2-S2-KU-AI-02 · SLIIT</div>',
-        unsafe_allow_html=True,
-    )
+        inject_styles()
+        user = get_current_user()
+        from pages.customer_dashboard import show_customer_dashboard
+        show_customer_dashboard(user.get('customer_id'))
+ 
