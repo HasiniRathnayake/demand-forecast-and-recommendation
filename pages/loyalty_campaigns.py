@@ -403,6 +403,7 @@ def show_promotions():
                     if summary['sent'] > 0:
                         st.success(f"🎉 **{campaign_name}** sent!")
                         st.balloons()
+                        st.cache_data.clear()
                     elif summary['skipped'] == len(offers):
                         st.markdown(
                             '<div class="alert-warning">'
