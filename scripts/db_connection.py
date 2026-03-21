@@ -48,16 +48,22 @@ class DatabaseConnection:
             return None
 
     def execute_query(self, query, params=None):
+        """Execute INSERT/UPDATE/DELETE"""
         try:
             self.connect()
-            self.cur.execute(query, params or ())
-            self.conn.commit()
-            self.disconnect()
-            return True
+            if self.cur and self.conn:
+                self.cur.execute(query, params or ())
+                self.conn.commit()
+                self.disconnect()
+                return True
+            return False
         except Exception as e:
             print(f"Execute error: {e}")
             if self.conn:
-                self.conn.rollback()
+                try:
+                    self.conn.rollback()
+                except:
+                    pass
             self.disconnect()
             return False
 
