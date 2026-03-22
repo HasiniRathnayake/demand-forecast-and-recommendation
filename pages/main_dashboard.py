@@ -70,7 +70,7 @@ def render_main_dashboard() -> None:
                         "across categories.",
                 "page": "waste_monitor",
                 "color": "#059669",
-                "ready": False,
+                "ready": True,
             },
             {
                 "icon": "📦",
