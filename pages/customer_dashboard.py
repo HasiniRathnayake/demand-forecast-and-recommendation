@@ -135,6 +135,12 @@ def show_customer_dashboard(customer_id):
         st.error("No customer account linked to this login.")
         st.info("Please contact Sunrise Super staff to link your account.")
         return
+# ── Refresh button ────────────────────────────────────
+    col_refresh, col_space = st.columns([1, 5])
+    with col_refresh:
+        if st.button("🔄 Refresh", key="refresh_dashboard"):
+            st.cache_data.clear()
+            st.rerun()
 
     # Load all data in parallel (all cached)
     profile         = _get_profile(customer_id)

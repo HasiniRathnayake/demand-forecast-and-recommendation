@@ -133,7 +133,6 @@ class EmailSender:
         import random
         delivery_status = 'sent' if status else 'failed'
 
-        # Simulated open/click rates by segment (industry realistic benchmarks)
         open_rates = {
             'VIP Customer':     0.75,
             'High Value':       0.65,
@@ -155,10 +154,19 @@ class EmailSender:
 
         open_rate  = open_rates.get(segment, 0.40)
         click_rate = click_rates.get(segment, 0.20)
+        opened     = status and random.random() < open_rate
+        clicked    = opened and random.random() < click_rate
 
-        opened  = status and random.random() < open_rate
-        clicked = opened and random.random() < click_rate
-
+        print(f"DEBUG: Logging email for {customer_id}, status={delivery_status}")
+        result = self.db.execute_query("""
+            INSERT INTO email_log
+            (customer_id, email_type, subject, email_content,
+             sent_date, delivery_status, opened, clicked)
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s)
+        """, [customer_id, email_type, subject, html_content,
+              delivery_status, opened, clicked])
+        print(f"DEBUG: Log result = {result}")
+        
         self.db.execute_query("""
             INSERT INTO email_log
             (customer_id, email_type, subject, email_content,

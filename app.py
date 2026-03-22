@@ -180,6 +180,42 @@ elif page == "loyalty":
         'IT24100971 · SLIIT</div>',
         unsafe_allow_html=True,
     )
+# ── Route: short shipment detector ───────────────────────────────────────────
+elif page == "short_shipment":
+    from ui.styles import inject_styles
+    from services.auth_service import get_current_user, logout
+    inject_styles()
+
+    col_back, col_title, col_user = st.columns([1, 5, 1])
+    with col_back:
+        if st.button("← Hub", key="back_shipment"):
+            st.session_state.current_page = "main_dashboard"
+            st.rerun()
+    with col_title:
+        st.markdown(
+            '<p class="main-header">🚚 Short-Shipment Detector</p>',
+            unsafe_allow_html=True
+        )
+        st.markdown(
+            '<p class="sub-header">Detect and flag delivery shortfalls against purchase orders</p>',
+            unsafe_allow_html=True
+        )
+    with col_user:
+        user = get_current_user()
+        if user:
+            st.caption(f"👤 {user.get('username','').capitalize()}")
+        if st.button("Logout", key="shipment_logout"):
+            logout()
+
+    st.markdown("---")
+
+    from pages.short_shipment_page import render_short_shipment
+    render_short_shipment()
+
+    st.markdown(
+        '<div class="footer">Sunrise Supermarket · Short-Shipment Detector · SLIIT</div>',
+        unsafe_allow_html=True,
+    )
 # ── Fallback ───────────────────────────────────────────────────────────────────
 else:
     st.session_state.current_page = "login"
