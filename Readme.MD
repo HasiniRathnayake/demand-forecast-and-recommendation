@@ -1,155 +1,87 @@
-# 📊 Demand Forecast Dashboard — Sunrise Supermarket
+# ☀️ Sunrise Super — AI Inventory System
 
-**IT2021 AIML Project | Group 2026-Y2-S2-KU-AI-02**  
-**Developer:** Rathnayake R.M.H.T — Demand Forecast Dashboard & Model Training
+A unified, AI-powered platform for intelligent retail inventory management built for the **2026-Y2-S2-KU-AI-02** project. 
 
----
-
-## Overview
-
-AI-powered demand forecasting dashboard for Sunrise Supermarket, Kandy, Sri Lanka.  
-Predicts future demand for 6 key product categories using XGBoost & Random Forest models.
-
-### Focused Product Categories
-`Sugar` | `Rice` | `Flour` | `Dairy` | `Oil` | `Beverages`
+The system provides predictive, automated, and streamlined tools across six different business domains, backed by a predictive Machine Learning pipeline and a centralized Supabase database.
 
 ---
 
-## Tech Stack
+## 🚀 Key Modules & Dashboards
 
-| Layer        | Technology                  |
-|-------------|-----------------------------|
-| Frontend     | Streamlit                   |
-| Backend      | Python 3.11                 |
-| Database     | Supabase (PostgreSQL)       |
-| Visualization| Plotly                      |
-| ML (Future)  | Scikit-learn, XGBoost, RF   |
-| Weather API  | OpenWeatherMap (Kandy, LK)  |
+The system consists of a shared home landing page linking to 6 specialized dashboards:
+
+### 1. Procurement & Stock Replenishment (Core ML Module)
+*Owned by: IT24100168*
+- Core functionality of the platform utilizing a **Python Machine Learning Pipeline**.
+- Aggregates historical sales, current stock, and pending POs.
+- Features dynamic reorder point prediction using **XGBoost** and **Prophet** time-series forecasting.
+- Generates intelligent "Suggested Qty" insights with automated urgency classification.
+- Dashboard allows procurement officers to 1-click Approve or Reject ML-generated orders.
+
+### 2. Demand Forecasting
+- Predictive visualization of weekly sales.
+- Integrates historical sales volume with a custom holiday calendar (e.g., Ramadan, Eid) to warn of sudden demand spikes.
+
+### 3. Waste & Performance Monitor
+- Dedicated log for perishable stock wastage.
+- Visualizes waste trends over time and compares AI predictions against actual historical performance to calculate financial ROI.
+
+### 4. Short-Shipment Detector
+- Acts as a financial security guard for received goods.
+- Flags discrepancies where `Invoiced Qty > Received Qty`.
+- Maintains a real-time risk profile for incoming shipments.
+
+### 5. Smart Loyalty & Promotion Manager
+- Groups customers dynamically into segments (e.g., High Value, At Risk).
+- Allows marketing teams to manage and track the success of targeted digital promotions out to specific demographic sets.
+
+### 6. Smart Inventory Intake
+- A mobile-responsive digital intake form for staff on the warehouse floor.
+- Real-time ±10% mathematical anomaly detection alerts staff immediately if physical goods do not match the expected shipment tally.
 
 ---
 
-## Project Structure
+## 🛠️ Technology Stack
 
-```
-demand-forecast-dashboard/
-├── app.py                  ← Entry point
-├── config/settings.py      ← Config & constants
-├── data/                   ← Database layer
-├── services/               ← Business logic
-├── ml/                     ← Model interface
-├── ui/                     ← UI components
-└── tests/                  ← Unit & validation tests
-```
+* **Frontend:** Pure HTML5, CSS3, Vanilla JavaScript (ES6+). No heavy frameworks, allowing for lightning-fast load times.
+* **Design System:** Custom CSS variables (`shared.css`) implementing a premium, glassmorphism "Luxury Dark Mode" with full Light Mode toggle support.
+* **Backend / Database:** [Supabase](https://supabase.com) (PostgreSQL) integrated via REST APIs and Row-Level Security.
+* **Local Server:** Lightweight Node.js server (`server.js`) for routing and MIME type handling.
+* **Data Visualization:** Chart.js for all KPI graphs, line charts, and bar charts.
+* **Machine Learning Pipeline (`/ml`):** Python 3.10+, Pandas, Scikit-Learn (K-Means Clustering, Random Forests), XGBoost, and Meta Prophet.
 
 ---
 
-## Setup (Local)
+## ⚙️ Setup & Installation
 
-### Prerequisites
-- Python 3.11
-- Supabase account with project set up
+### 1. Database Setup
+A single SQL script provisions the entire database structure.
+1. Log into your Supabase project.
+2. Open the SQL Editor.
+3. Copy the contents of `setup_tables.sql` and run it to construct all 7 data tables and configure constraints.
 
-### 1. Clone & Navigate
+### 2. Running the Dashboards (Frontend)
+Ensure you have Node.js installed.
 ```bash
-git clone <repo-url>
-cd demand-forecast-dashboard
+# Start the local development server
+node server.js
 ```
+The application will be accessible at: **http://localhost:3456**
 
-### 2. Create Virtual Environment (Python 3.11)
+### 3. Running the ML Pipeline (Backend Python)
+The Python pipeline connects to Supabase, generates predictions, and writes fresh replenishment orders back to the database.
 ```bash
-py -3.11 -m venv venv311
-venv311\Scripts\activate   # Windows
-# OR
-source venv311/bin/activate # Mac/Linux
-```
-
-### 3. Install Dependencies
-```bash
+cd ml
 pip install -r requirements.txt
-```
 
-### 4. Configure Environment
-Create a `.env` file in the root:
-```env
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_KEY=your_supabase_anon_key
-WEATHER_API_KEY=your_openweathermap_api_key
-```
+# Run the full pipeline (train models, predict, and upload)
+python pipeline.py
 
-> **Weather API**: Get a free key at https://openweathermap.org/api  
-> Currently uses Kandy, LK coordinates (7.2906, 80.6337)
-
-### 5. Run the Dashboard
-```bash
-streamlit run app.py
+# Run a dry-run (view predictions in terminal without uploading)
+python pipeline.py --dry-run
 ```
 
 ---
 
-## Switching from Mock → Real ML Model
-
-The system is architected to swap models with minimal code change.
-
-In `ml/model_interface.py`, implement the `BaseForecaster` interface in a new class.  
-In `services/forecast_service.py`, swap `MockForecaster` → your trained model class.
-
-```python
-# services/forecast_service.py — change this one line:
-from ml.mock_forecaster import MockForecaster as ActiveModel
-# → to:
-from ml.xgboost_forecaster import XGBoostForecaster as ActiveModel
-```
-
----
-
-## Supabase Tables Required
-
-```sql
-product_catalog (product_code, product_name, category, sub_category, 
-                 unit_price, offer_price, package_size, unit_of_measure,
-                 is_perishable, shelf_life_days, is_ai_supported)
-
-daily_sales_history (product_code, transaction_date, quantity_sold, is_promotion)
-
-demand_forecasts (product_code, forecast_date, predicted_demand, confidence_level,
-                  model_version, model_accuracy, created_at)
-```
-
----
-
-## Running Tests
-
-```bash
-pytest tests/ -v
-```
-
----
-
-## Git Workflow
-
-```bash
-# First time
-git checkout -b feature/demand-forecast
-
-# Regular commits
-git add .
-git commit -m "feat: add forecast tab with confidence intervals"
-git push origin feature/demand-forecast
-```
-
----
-
-## Current Status (Progress 2)
-
-- [x] Dashboard UI with forecast, historical, and data tabs
-- [x] Mock ML model with XGBoost/RF interface ready
-- [x] Supabase integration (read/write)
-- [x] Weather API integration (Kandy)
-- [x] Input validation & error handling
-- [x] Unit tests
-- [ ] Real XGBoost/RF model training (Progress 3)
-- [ ] Live client sales data integration
-
----
-
-*Progress 2 | IT2021 AIML Project | SLIIT*
+## 🎨 Theme Support
+The UI features a fully integrated **Dark / Light mode** persistent across page navigations via `localStorage`. The theme logic is handled entirely by CSS cascading attribute selectors (`data-theme="light"`), ensuring zero-flicker loading.
