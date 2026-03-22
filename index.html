@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sunrise Super — AI Inventory System</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <style>
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #0a0d14;
+            color: #f1f5f9;
+            min-height: 100vh;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+
+        body[data-theme="light"] {
+            background: #f8fafc;
+            color: #1e293b;
+        }
+
+        body[data-theme="light"] .hero {
+            background: linear-gradient(180deg, rgba(245, 158, 11, 0.04) 0%, transparent 100%);
+            border-bottom-color: #e2e8f0;
+        }
+
+        body[data-theme="light"] .hero h1 span {
+            color: #d97706;
+        }
+
+        body[data-theme="light"] .hero p {
+            color: #475569;
+        }
+
+        body[data-theme="light"] .hero-meta {
+            color: #64748b;
+        }
+
+        body[data-theme="light"] .dash-card {
+            background: #ffffff;
+            border-color: #e2e8f0;
+        }
+
+        body[data-theme="light"] .dash-card:hover {
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+        }
+
+        body[data-theme="light"] .card-title {
+            color: #1e293b;
+        }
+
+        body[data-theme="light"] .card-desc {
+            color: #475569;
+        }
+
+        body[data-theme="light"] .card-member {
+            color: #64748b;
+        }
+
+        body[data-theme="light"] .feature-tag {
+            background: #f1f5f9;
+            border-color: #e2e8f0;
+            color: #64748b;
+        }
+
+        body[data-theme="light"] footer {
+            border-top-color: #dde5ef;
+            color: #64748b;
+        }
+
+        /* Hero */
+        .hero {
+            text-align: center;
+            padding: 64px 24px 40px;
+            background: linear-gradient(180deg, rgba(245, 158, 11, 0.06) 0%, transparent 100%);
+            border-bottom: 1px solid #1e2d45;
+        }
+
+        .hero-badge {
+            display: inline-block;
+            background: rgba(245, 158, 11, 0.12);
+            color: #f59e0b;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            padding: 4px 14px;
+            border-radius: 99px;
+            border: 1px solid rgba(245, 158, 11, 0.25);
+            margin-bottom: 20px;
+        }
+
+        .hero h1 {
+            font-size: 42px;
+            font-weight: 800;
+            letter-spacing: -1.5px;
+            line-height: 1.15;
+            margin-bottom: 14px;
+        }
+
+        .hero h1 span {
+            color: #f59e0b;
+        }
+
+        .hero p {
+            font-size: 15px;
+            color: #94a3b8;
+            max-width: 520px;
+            margin: 0 auto 10px;
+        }
+
+        .hero-meta {
+            font-size: 12px;
+            color: #475569;
+            margin-top: 8px;
+        }
+
+        /* Grid */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            padding: 40px 32px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        /* Dashboard card */
+        .dash-card {
+            background: #111827;
+            border: 1px solid #1e2d45;
+            border-radius: 12px;
+            padding: 24px;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.25s ease;
+            cursor: pointer;
+            text-decoration: none;
+            display: block;
+        }
+
+
+        .dash-card:hover {
+            border-color: var(--c, #f59e0b);
+            transform: translateY(-3px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+        }
+
+        .dash-card:hover::before {
+            opacity: 0.08;
+        }
+
+        .card-num {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            color: var(--c, #f59e0b);
+            margin-bottom: 12px;
+            opacity: 0.8;
+        }
+
+        .card-icon {
+            font-size: 32px;
+            margin-bottom: 14px;
+        }
+
+        .card-title {
+            font-size: 17px;
+            font-weight: 700;
+            margin-bottom: 6px;
+            letter-spacing: -0.3px;
+        }
+
+        .card-desc {
+            font-size: 13px;
+            color: #94a3b8;
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+
+        .card-member {
+            font-size: 11px;
+            color: #475569;
+            margin-bottom: 18px;
+        }
+
+        .card-member strong {
+            color: var(--c, #f59e0b);
+        }
+
+        .card-features {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-bottom: 20px;
+        }
+
+        .feature-tag {
+            font-size: 10.5px;
+            background: rgba(255, 255, 255, 0.05);
+            color: #94a3b8;
+            padding: 3px 8px;
+            border-radius: 4px;
+            border: 1px solid #1e2d45;
+        }
+
+        /* --- Theme Toggle Switch --- */
+        .top-bar {
+            display: flex;
+            justify-content: flex-end;
+            padding: 14px 32px 0;
+        }
+
+        .theme-toggle {
+            position: relative;
+            width: 64px;
+            height: 30px;
+            border-radius: 15px;
+            border: 1.5px solid #253352;
+            background: #1a2235;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 7px;
+            transition: border-color 0.3s, background 0.3s;
+            user-select: none;
+        }
+
+        .theme-toggle:hover {
+            border-color: #f59e0b;
+            background: rgba(245, 158, 11, 0.1);
+        }
+
+        .theme-toggle .tt-knob {
+            position: absolute;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            background: #f59e0b;
+            top: 2px;
+            left: 3px;
+            transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+            z-index: 1;
+        }
+
+        body[data-theme="light"] .theme-toggle .tt-knob {
+            transform: translateX(33px);
+        }
+
+        .theme-toggle .tt-icon {
+            font-size: 13px;
+            line-height: 1;
+            z-index: 2;
+            transition: opacity 0.2s;
+        }
+
+        .theme-toggle .tt-sun {
+            opacity: 0.4;
+        }
+
+        .theme-toggle .tt-moon {
+            opacity: 1;
+        }
+
+        body[data-theme="light"] .theme-toggle .tt-sun {
+            opacity: 1;
+        }
+
+        body[data-theme="light"] .theme-toggle .tt-moon {
+            opacity: 0.4;
+        }
+
+        body[data-theme="light"] .theme-toggle {
+            background: #e8f0f8;
+            border-color: #c8d6e8;
+        }
+
+        body[data-theme="light"] .theme-toggle:hover {
+            border-color: #d97706;
+            background: rgba(217, 119, 6, 0.08);
+        }
+
+        .card-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: var(--c, #f59e0b);
+            color: #000;
+            padding: 9px 18px;
+            border-radius: 7px;
+            font-size: 13px;
+            font-weight: 600;
+            transition: opacity 0.2s;
+        }
+
+        .dash-card:hover .card-btn {
+            opacity: 0.9;
+        }
+
+        /* Your card */
+        .your-card {
+            border-color: rgba(245, 158, 11, 0.4);
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 28px;
+            border-top: 1px solid #1e2d45;
+            font-size: 12px;
+            color: #475569;
+        }
+
+        footer span {
+            color: #f59e0b;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="top-bar">
+        <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode"><span
+                class="tt-icon tt-sun">☀️</span><span class="tt-knob"></span><span
+                class="tt-icon tt-moon">🌙</span></button>
+    </div>
+    <div class="hero">
+        <h1>☀️ Sunrise <span>Super</span><br>AI Inventory System</h1>
+        <p>A unified AI-powered platform for intelligent retail inventory management.</p>
+    </div>
+
+    <div class="grid">
+
+        <!-- 01 Demand Forecasting -->
+        <a href="/demand-forecasting/" class="dash-card" style="--c:#3b82f6">
+            <div class="card-num">01 · Demand Forecasting</div>
+            <div class="card-icon">📈</div>
+            <div class="card-title">Demand Forecasting Dashboard</div>
+            <div class="card-desc">Visual tool predicting weekly sales using historical data and holiday calendar.</div>
+
+            <div class="card-features">
+                <span class="feature-tag">Weekly Forecasts</span>
+                <span class="feature-tag">Trend Charts</span>
+                <span class="feature-tag">Holiday Integration</span>
+            </div>
+            <div class="card-btn">Open Dashboard →</div>
+        </a>
+
+        <!-- 02 Waste Monitor -->
+        <a href="/waste-monitor/" class="dash-card" style="--c:#10b981">
+            <div class="card-num">02 · Waste &amp; Performance</div>
+            <div class="card-icon">🗑️</div>
+            <div class="card-title">Waste &amp; Performance Monitor</div>
+            <div class="card-desc">Reporting dashboard tracking food waste and comparing AI predictions vs. actuals.
+            </div>
+
+            <div class="card-features">
+                <span class="feature-tag">Waste Tracking</span>
+                <span class="feature-tag">ROI Report</span>
+                <span class="feature-tag">CSV Export</span>
+            </div>
+            <div class="card-btn">Open Dashboard →</div>
+        </a>
+
+        <!-- 03 Short-Shipment -->
+        <a href="/shipment-detector/" class="dash-card" style="--c:#ef4444">
+            <div class="card-num">03 · Short-Shipment Detector</div>
+            <div class="card-icon">🚚</div>
+            <div class="card-title">Short-Shipment Detector</div>
+            <div class="card-desc">Detects differences between invoiced and received quantities. Alerts for financial
+                protection.</div>
+
+            <div class="card-features">
+                <span class="feature-tag">Discrepancy Detection</span>
+                <span class="feature-tag">Alert System</span>
+                <span class="feature-tag">Supplier Tracking</span>
+            </div>
+            <div class="card-btn">Open Dashboard →</div>
+        </a>
+
+        <!-- 04 Loyalty Manager -->
+        <a href="/loyalty-manager/" class="dash-card" style="--c:#8b5cf6">
+            <div class="card-num">04 · Smart Loyalty</div>
+            <div class="card-icon">💎</div>
+            <div class="card-title">Smart Loyalty &amp; Promotion Manager</div>
+            <div class="card-desc">Customer marketing tool with personalized deals, segmentation, and campaign
+                management.</div>
+
+            <div class="card-features">
+                <span class="feature-tag">Customer Segments</span>
+                <span class="feature-tag">Promotions CRUD</span>
+                <span class="feature-tag">Campaign Status</span>
+            </div>
+            <div class="card-btn">Open Dashboard →</div>
+        </a>
+
+        <!-- 05 Inventory Intake -->
+        <a href="/inventory-intake/" class="dash-card" style="--c:#06b6d4">
+            <div class="card-num">05 · Smart Inventory Intake</div>
+            <div class="card-icon">📋</div>
+            <div class="card-title">Smart Inventory Intake</div>
+            <div class="card-desc">Digital form for staff during delivery truck unloading with anomaly detection.</div>
+
+            <div class="card-features">
+                <span class="feature-tag">Digital Intake Form</span>
+                <span class="feature-tag">Anomaly Alerts</span>
+                <span class="feature-tag">Mobile Responsive</span>
+            </div>
+            <div class="card-btn">Open Dashboard →</div>
+        </a>
+
+        <!-- 06 Procurement (yours) -->
+        <a href="/dashboard/" class="dash-card your-card" style="--c:#f59e0b">
+            <div class="card-num">06 · Stock Replenishment</div>
+            <div class="card-icon">🛒</div>
+            <div class="card-title">Procurement Dashboard</div>
+            <div class="card-desc">AI/ML-powered automated ordering with supplier management and inventory threshold
+                alerts.</div>
+
+            <div class="card-features">
+                <span class="feature-tag">ML Predictions</span>
+                <span class="feature-tag">Approve/Reject</span>
+                <span class="feature-tag">KPI Cards</span>
+            </div>
+            <div class="card-btn">Open Dashboard →</div>
+        </a>
+
+    </div>
+
+    <footer>Built with ❤️ for <span>Sunrise Super</span></footer>
+    <script src="/theme.js"></script>
+</body>
+
+</html>
