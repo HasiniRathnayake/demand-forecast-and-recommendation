@@ -8,8 +8,8 @@ from datetime import date
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from utils.database import fetch_ai_performance, fetch_waste_records
-from utils.helpers  import fmt_date, fmt_pct, format_lkr
+from waste_monitor.utils.database import fetch_ai_performance, fetch_waste_records
+from waste_monitor.utils.helpers  import fmt_date, fmt_pct, format_lkr
 
 
 def show_dashboard(start: date, end: date) -> None:

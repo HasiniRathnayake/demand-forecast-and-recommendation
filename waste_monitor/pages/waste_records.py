@@ -8,9 +8,9 @@ from datetime import date, datetime
 import time
 import plotly.express as px
 import streamlit as st
-from utils.database   import fetch_waste_records, insert_waste_record, product_code_exists
-from utils.helpers    import format_lkr, fmt_date, fmt_datetime
-from utils.validators import (
+from waste_monitor.utils.database   import fetch_waste_records, insert_waste_record, product_code_exists
+from waste_monitor.utils.helpers    import format_lkr, fmt_date, fmt_datetime
+from waste_monitor.utils.validators import (
     VALID_WASTE_REASONS, MAX_PRICE_PER_KG, MAX_QUANTITY_KG,
     validate_waste_record_form,
 )
