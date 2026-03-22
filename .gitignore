@@ -1,0 +1,6 @@
+node_modules/
+.env
+.gemini/
+__pycache__/
+*.pyc
+.DS_Store

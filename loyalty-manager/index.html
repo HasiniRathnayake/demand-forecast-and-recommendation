@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <title>Smart Loyalty &amp; Promotion Manager — Sunrise Super</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="../shared.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="sidebar-logo">☀️ Sunrise Super</div>
+                <div class="sidebar-sub">Loyalty &amp; Promotions</div>
+            </div>
+            <div class="sidebar-section">Navigation</div>
+            <a class="nav-item active" id="nav-overview" href="#">
+                <span class="icon">📊</span> Overview
+            </a>
+            <a class="nav-item" id="nav-segments" href="#">
+                <span class="icon">👥</span> Customer Segments
+            </a>
+            <a class="nav-item" id="nav-promotions" href="#">
+                <span class="icon">🎁</span> Promotions
+            </a>
+            <a class="nav-item" id="nav-campaigns" href="#">
+                <span class="icon">📣</span> Campaigns
+            </a>
+            <div class="sidebar-section">System</div>
+            <a class="nav-item" href="../index.html"><span class="icon">🏠</span> All Dashboards</a>
+            <div class="sidebar-footer">
+                <div class="member-tag">
+                    <strong>Abeynayake D.A</strong>
+                    IT24100971 · Module 04
+                </div>
+            </div>
+        </aside>
+
+        <div class="main">
+            <div class="topbar">
+                <div class="topbar-left">
+                    <h1 id="page-title">Overview</h1>
+                    <p id="page-sub">Smart loyalty and promotion management</p>
+                </div>
+                <div class="topbar-right">
+                    <span id="last-updated" class="text-muted">Loading…</span>
+                    <button class="btn btn-secondary btn-sm" id="btn-refresh">↻ Refresh</button>
+                    <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode"><span
+                            class="tt-icon tt-sun">☀️</span><span class="tt-knob"></span><span
+                            class="tt-icon tt-moon">🌙</span></button>
+                    <button class="btn btn-primary btn-sm" id="btn-add-promo">+ New Promotion</button>
+                </div>
+            </div>
+
+            <div class="content">
+
+                <!-- OVERVIEW -->
+                <div class="view active" id="view-overview">
+                    <div class="kpi-grid">
+                        <div class="kpi-card purple">
+                            <div class="kpi-icon">🎁</div>
+                            <div class="kpi-value" id="kpi-active">—</div>
+                            <div class="kpi-label">Active Promotions</div>
+                        </div>
+                        <div class="kpi-card blue">
+                            <div class="kpi-icon">👥</div>
+                            <div class="kpi-value" id="kpi-customers">—</div>
+                            <div class="kpi-label">Customers Reached</div>
+                        </div>
+                        <div class="kpi-card amber">
+                            <div class="kpi-icon">%</div>
+                            <div class="kpi-value" id="kpi-avg-discount">—%</div>
+                            <div class="kpi-label">Avg Discount</div>
+                        </div>
+                        <div class="kpi-card green">
+                            <div class="kpi-icon">📣</div>
+                            <div class="kpi-value" id="kpi-campaigns">—</div>
+                            <div class="kpi-label">Total Campaigns</div>
+                        </div>
+                    </div>
+
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+                        <div class="card">
+                            <div class="card-header"><span class="card-title">👥 Segment Distribution</span></div>
+                            <div class="card-body">
+                                <div class="chart-container" style="height:220px">
+                                    <canvas id="segment-chart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header"><span class="card-title">📣 Campaign Status</span></div>
+                            <div class="card-body">
+                                <div class="chart-container" style="height:220px">
+                                    <canvas id="campaign-chart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">⚡ Active Promotions</span></div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Promo Name</th>
+                                        <th>Segment</th>
+                                        <th>Discount</th>
+                                        <th>Channel</th>
+                                        <th>Customers</th>
+                                        <th>Ends</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="active-promos-tbody">
+                                    <tr>
+                                        <td colspan="7" class="loading-row">Loading…</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SEGMENTS -->
+                <div class="view" id="view-segments">
+                    <div class="kpi-grid">
+                        <div class="kpi-card purple">
+                            <div class="kpi-icon">⭐</div>
+                            <div class="kpi-value" id="seg-high">—</div>
+                            <div class="kpi-label">High Value</div>
+                        </div>
+                        <div class="kpi-card blue">
+                            <div class="kpi-icon">👤</div>
+                            <div class="kpi-value" id="seg-regular">—</div>
+                            <div class="kpi-label">Regular</div>
+                        </div>
+                        <div class="kpi-card amber">
+                            <div class="kpi-icon">⚠️</div>
+                            <div class="kpi-value" id="seg-atrisk">—</div>
+                            <div class="kpi-label">At-Risk</div>
+                        </div>
+                        <div class="kpi-card green">
+                            <div class="kpi-icon">🆕</div>
+                            <div class="kpi-value" id="seg-new">—</div>
+                            <div class="kpi-label">New</div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">👥 Customer Segments</span>
+                            <button class="btn btn-primary btn-sm" id="btn-add-segment">+ Add Segment</button>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Segment</th>
+                                        <th>Customer Count</th>
+                                        <th>Avg Spend KWD</th>
+                                        <th>Last Purchase</th>
+                                        <th>Active Promos</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="segments-tbody">
+                                    <tr>
+                                        <td colspan="6" class="loading-row">Loading…</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PROMOTIONS -->
+                <div class="view" id="view-promotions">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">🎁 All Promotions</span>
+                            <div class="toolbar">
+                                <div class="search-box">
+                                    <input type="text" id="search-promo" placeholder="Search promotions…" />
+                                </div>
+                                <select class="form-control" id="filter-promo-status" style="width:140px">
+                                    <option value="">All Status</option>
+                                    <option value="ACTIVE">Active</option>
+                                    <option value="SCHEDULED">Scheduled</option>
+                                    <option value="ENDED">Ended</option>
+                                    <option value="PAUSED">Paused</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Promo Name</th>
+                                        <th>Segment</th>
+                                        <th>Discount%</th>
+                                        <th>Channel</th>
+                                        <th>Start</th>
+                                        <th>End</th>
+                                        <th>Status</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="promos-tbody">
+                                    <tr>
+                                        <td colspan="8" class="loading-row">No promotions yet.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination">
+                            <span class="page-info" id="page-info">—</span>
+                            <button class="btn btn-secondary btn-sm" id="btn-prev">‹ Prev</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-next">Next ›</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CAMPAIGNS -->
+                <div class="view" id="view-campaigns">
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px"
+                        id="campaign-cards">
+                        <div class="loading-row">Loading campaigns…</div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- Promotion Modal -->
+    <div class="modal-overlay" id="promo-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span class="modal-title" id="promo-modal-title">New Promotion</span>
+                <button class="modal-close" id="promo-modal-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="pm-id" />
+                <div class="form-grid">
+                    <div class="form-group" style="grid-column:1/-1">
+                        <label class="form-label">Promotion Name *</label>
+                        <input class="form-control" id="pm-name" placeholder="e.g. Ramadan Special Offer" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Customer Segment *</label>
+                        <select class="form-control" id="pm-segment">
+                            <option value="HIGH_VALUE">High Value</option>
+                            <option value="REGULAR">Regular</option>
+                            <option value="AT_RISK">At-Risk</option>
+                            <option value="NEW">New</option>
+                            <option value="ALL">All Customers</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Discount % *</label>
+                        <input class="form-control" type="number" id="pm-discount" placeholder="10" min="1" max="90" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Channel</label>
+                        <select class="form-control" id="pm-channel">
+                            <option value="EMAIL">Email</option>
+                            <option value="SMS">SMS</option>
+                            <option value="APP">App Notification</option>
+                            <option value="ALL">All Channels</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Status</label>
+                        <select class="form-control" id="pm-status">
+                            <option value="SCHEDULED">Scheduled</option>
+                            <option value="ACTIVE">Active</option>
+                            <option value="PAUSED">Paused</option>
+                            <option value="ENDED">Ended</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Start Date</label>
+                        <input class="form-control" type="date" id="pm-start" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">End Date</label>
+                        <input class="form-control" type="date" id="pm-end" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Target Customers</label>
+                        <input class="form-control" type="number" id="pm-customers" placeholder="0" />
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Offer Description</label>
+                    <textarea class="form-control" id="pm-desc"
+                        placeholder="e.g. Get 15% off all fresh produce this Ramadan!"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="promo-modal-cancel">Cancel</button>
+                <button class="btn btn-primary" id="promo-modal-save">Save Promotion</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Segment Modal -->
+    <div class="modal-overlay" id="seg-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span class="modal-title">Add Customer Segment Data</span>
+                <button class="modal-close" id="seg-modal-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">Segment *</label>
+                        <select class="form-control" id="sgm-segment">
+                            <option value="HIGH_VALUE">High Value</option>
+                            <option value="REGULAR">Regular</option>
+                            <option value="AT_RISK">At-Risk</option>
+                            <option value="NEW">New</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Customer Count *</label>
+                        <input class="form-control" type="number" id="sgm-count" placeholder="0" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Avg Spend KWD</label>
+                        <input class="form-control" type="number" step="0.001" id="sgm-avg-spend" placeholder="0.000" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Last Purchase Date</label>
+                        <input class="form-control" type="date" id="sgm-last-purchase" />
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="seg-modal-cancel">Cancel</button>
+                <button class="btn btn-primary" id="seg-modal-save">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script src="../theme.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>
