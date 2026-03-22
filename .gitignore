@@ -1,3 +1,8 @@
+code .gitignore
+```
+
+You'll see conflict markers. Replace everything with this clean version:
+```
 .env
 venv/
 venv311/
