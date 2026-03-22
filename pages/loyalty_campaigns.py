@@ -351,13 +351,62 @@ def show_promotions():
                     unsafe_allow_html=True
                 )
 
+            # ── VALIDATION BEFORE SEND ──────────────────────────────────
+            validation_errors = []
+            
+            # Campaign name validation
+            if not campaign_name or len(campaign_name.strip()) < 3:
+                validation_errors.append("❌ Campaign name must be at least 3 characters")
+            if len(campaign_name) > 100:
+                validation_errors.append("❌ Campaign name cannot exceed 100 characters")
+            
+            # Message validation
+            if not custom_message or len(custom_message.strip()) < 10:
+                validation_errors.append("❌ Email message must be at least 10 characters")
+            if len(custom_message) > 500:
+                validation_errors.append("❌ Email message cannot exceed 500 characters")
+            
+            # Discount validation
+            if discount_pct < 1 or discount_pct > 90:
+                validation_errors.append("❌ Discount must be between 1% and 90%")
+            if discount_pct > 50:
+                validation_errors.append("⚠️ Warning: Discount over 50% may impact profitability")
+            
+            # Date validation
+            max_future_days = 90
+            days_ahead = (send_date - date.today()).days
+            if days_ahead > max_future_days:
+                validation_errors.append(f"❌ Send date cannot be more than {max_future_days} days in advance")
+            
+            # Valid days validation
+            if valid_days < 1:
+                validation_errors.append("❌ Offer must be valid for at least 1 day")
+            if valid_days > 60:
+                validation_errors.append("⚠️ Warning: Offer valid for over 60 days may reduce urgency")
+            
+            # Audience validation
+            if not selected_segs or len(selected_segs) == 0:
+                validation_errors.append("❌ Select at least one customer segment")
+            if email_eligible == 0:
+                validation_errors.append("❌ No eligible customers in selected segments")
+            
+            # Display validation errors
+            if validation_errors:
+                error_container = st.container(border=True)
+                error_container.markdown("### 🔍 Validation Issues")
+                for error in validation_errors:
+                    error_container.markdown(error)
+            
+            # Disable send button if errors exist
+            send_enabled = len(validation_errors) == 0
+            
             scheduled = send_date > date.today()
             btn_label = (
                 f"📅 Schedule for {send_date.strftime('%d %b %Y')}"
                 if scheduled else "📧 Send Campaign Now"
             )
 
-            if st.button(btn_label, type="primary", use_container_width=True):
+            if st.button(btn_label, type="primary", use_container_width=True, disabled=not send_enabled):
                 if scheduled:
                     st.success(
                         f"✅ **{campaign_name}** scheduled for "
