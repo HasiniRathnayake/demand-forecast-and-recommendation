@@ -88,7 +88,7 @@ def render_main_dashboard() -> None:
                         "orders automatically.",
                 "page": "short_shipment",
                 "color": "#DC2626",
-                "ready": False,
+                "ready": True,
             },
             {
                 "icon": "🏪",
