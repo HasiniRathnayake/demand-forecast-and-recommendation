@@ -9,9 +9,9 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
-from utils.database   import fetch_ai_performance, fetch_demand_forecasts, upsert_ai_comparison
-from utils.helpers    import calculate_accuracy_metrics, fmt_date, fmt_datetime, fmt_pct, fmt_signed
-from utils.validators import validate_actual_sales
+from waste_monitor.utils.database   import fetch_ai_performance, fetch_demand_forecasts, upsert_ai_comparison
+from waste_monitor.utils.helpers    import calculate_accuracy_metrics, fmt_date, fmt_datetime, fmt_pct, fmt_signed
+from waste_monitor.utils.validators import validate_actual_sales
 
 
 def show_ai_performance(start: date, end: date) -> None:
