@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <title>Smart Inventory Intake — Sunrise Super</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="../shared.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* Mobile-first intake form */
+        .intake-form-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 28px;
+            max-width: 640px;
+            margin: 0 auto;
+        }
+
+        .intake-form-card h2 {
+            font-size: 18px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .intake-form-card p {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 20px;
+        }
+
+        .anomaly-flag {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--red-dim);
+            border: 1px solid rgba(239, 68, 68, 0.25);
+            border-radius: var(--radius-sm);
+            padding: 10px 14px;
+            font-size: 13px;
+            color: #f87171;
+            margin-top: 8px;
+        }
+
+        .ok-flag {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: var(--green-dim);
+            border: 1px solid rgba(16, 185, 129, 0.25);
+            border-radius: var(--radius-sm);
+            padding: 10px 14px;
+            font-size: 13px;
+            color: #34d399;
+            margin-top: 8px;
+        }
+
+        @media (max-width: 640px) {
+            .intake-form-card {
+                padding: 18px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="sidebar-logo">☀️ Sunrise Super</div>
+                <div class="sidebar-sub">Inventory Intake</div>
+            </div>
+            <div class="sidebar-section">Navigation</div>
+            <a class="nav-item active" id="nav-overview" href="#">
+                <span class="icon">📊</span> Overview
+            </a>
+            <a class="nav-item" id="nav-intake" href="#">
+                <span class="icon">📋</span> Intake Form
+            </a>
+            <a class="nav-item" id="nav-records" href="#">
+                <span class="icon">📁</span> Records
+            </a>
+            <a class="nav-item" id="nav-anomalies" href="#">
+                <span class="icon">🚨</span> Anomaly Alerts
+            </a>
+            <div class="sidebar-section">System</div>
+            <a class="nav-item" href="../index.html"><span class="icon">🏠</span> All Dashboards</a>
+            <div class="sidebar-footer">
+                <div class="member-tag">
+                    <strong>Rathnayake R.M.T.S</strong>
+                    IT24100012 · Module 05
+                </div>
+            </div>
+        </aside>
+
+        <div class="main">
+            <div class="topbar">
+                <div class="topbar-left">
+                    <h1 id="page-title">Overview</h1>
+                    <p id="page-sub">Smart inventory intake and anomaly detection</p>
+                </div>
+                <div class="topbar-right">
+                    <span id="last-updated" class="text-muted">Loading…</span>
+                    <button class="btn btn-secondary btn-sm" id="btn-refresh">↻ Refresh</button>
+                    <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode"><span
+                            class="tt-icon tt-sun">☀️</span><span class="tt-knob"></span><span
+                            class="tt-icon tt-moon">🌙</span></button>
+                    <button class="btn btn-primary btn-sm" id="btn-go-intake">📋 New Intake</button>
+                </div>
+            </div>
+
+            <div class="content">
+
+                <!-- OVERVIEW -->
+                <div class="view active" id="view-overview">
+                    <div class="kpi-grid">
+                        <div class="kpi-card blue">
+                            <div class="kpi-icon">🚚</div>
+                            <div class="kpi-value" id="kpi-today">—</div>
+                            <div class="kpi-label">Deliveries Today</div>
+                        </div>
+                        <div class="kpi-card red">
+                            <div class="kpi-icon">🚨</div>
+                            <div class="kpi-value" id="kpi-anomalies">—</div>
+                            <div class="kpi-label">Anomalies Flagged</div>
+                        </div>
+                        <div class="kpi-card green">
+                            <div class="kpi-icon">✅</div>
+                            <div class="kpi-value" id="kpi-accuracy">—%</div>
+                            <div class="kpi-label">Intake Accuracy Rate</div>
+                        </div>
+                        <div class="kpi-card amber">
+                            <div class="kpi-icon">📦</div>
+                            <div class="kpi-value" id="kpi-total">—</div>
+                            <div class="kpi-label">Total Intakes (All Time)</div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">📈 Daily Intake Accuracy (Last 14 Days)</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-container">
+                                <canvas id="accuracy-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">🚨 Latest Anomalies</span></div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>SKU</th>
+                                        <th>Product</th>
+                                        <th>Expected</th>
+                                        <th>Received</th>
+                                        <th>Variance</th>
+                                        <th>Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="latest-anomalies-tbody">
+                                    <tr>
+                                        <td colspan="7" class="loading-row">Loading…</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- INTAKE FORM -->
+                <div class="view" id="view-intake">
+                    <div class="intake-form-card">
+                        <h2>📋 Delivery Intake Form</h2>
+                        <p>Complete this form during truck unloading. Anomalies are flagged automatically.</p>
+
+                        <div class="form-grid" style="grid-template-columns:1fr 1fr">
+                            <div class="form-group">
+                                <label class="form-label">SKU / Product Code *</label>
+                                <input class="form-control" id="if-sku" placeholder="e.g. ST30244" autocomplete="off" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Product Name</label>
+                                <input class="form-control" id="if-name" placeholder="e.g. Rice 5kg" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Supplier</label>
+                                <input class="form-control" id="if-supplier" placeholder="Supplier name" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">PO Number</label>
+                                <input class="form-control" id="if-po" placeholder="e.g. PO-2025-001" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Expected Qty *</label>
+                                <input class="form-control" type="number" id="if-expected" placeholder="0"
+                                    oninput="checkAnomaly()" />
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Received Qty *</label>
+                                <input class="form-control" type="number" id="if-received" placeholder="0"
+                                    oninput="checkAnomaly()" />
+                            </div>
+                        </div>
+
+                        <div id="anomaly-display" style="display:none"></div>
+
+                        <div class="form-group" style="margin-top:14px">
+                            <label class="form-label">Recorded By</label>
+                            <input class="form-control" id="if-recorded-by" placeholder="Staff name" />
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Notes</label>
+                            <textarea class="form-control" id="if-notes" placeholder="Any notes about this delivery…"
+                                rows="2"></textarea>
+                        </div>
+
+                        <div style="display:flex;gap:10px;margin-top:18px">
+                            <button class="btn btn-secondary" id="if-clear">Clear Form</button>
+                            <button class="btn btn-primary" style="flex:1" id="if-submit">✅ Submit Intake
+                                Record</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RECORDS -->
+                <div class="view" id="view-records">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">📁 All Intake Records</span>
+                            <div class="toolbar">
+                                <div class="search-box">
+                                    <input type="text" id="search-rec" placeholder="Search SKU or product…" />
+                                </div>
+                                <select class="form-control" id="filter-anomaly" style="width:150px">
+                                    <option value="">All Records</option>
+                                    <option value="true">Anomalies Only</option>
+                                    <option value="false">Clean Only</option>
+                                </select>
+                                <button class="btn btn-secondary btn-sm" id="btn-export">⬇ Export CSV</button>
+                            </div>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>SKU</th>
+                                        <th>Product</th>
+                                        <th>Supplier</th>
+                                        <th>Expected</th>
+                                        <th>Received</th>
+                                        <th>Variance</th>
+                                        <th>Anomaly</th>
+                                        <th>Recorded By</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="records-tbody">
+                                    <tr>
+                                        <td colspan="10" class="loading-row">No records yet.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination">
+                            <span class="page-info" id="page-info">—</span>
+                            <button class="btn btn-secondary btn-sm" id="btn-prev">‹ Prev</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-next">Next ›</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ANOMALIES -->
+                <div class="view" id="view-anomalies">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">🚨 Flagged Anomalies</span>
+                            <button class="btn btn-success btn-sm" id="btn-clear-all">✅ Mark All Investigated</button>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>SKU</th>
+                                        <th>Product</th>
+                                        <th>Expected</th>
+                                        <th>Received</th>
+                                        <th>Variance %</th>
+                                        <th>Status</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="anomalies-tbody">
+                                    <tr>
+                                        <td colspan="8" class="loading-row">Loading…</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script src="../theme.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>
