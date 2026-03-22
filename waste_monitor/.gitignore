@@ -1,0 +1,24 @@
+# Credentials — NEVER push
+.env
+*.env
+
+# Friend's files — testing only, do not push
+login.py
+main_dashboard.py
+services/
+data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+env/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
