@@ -24,6 +24,9 @@ def _inject_inventory_styles() -> None:
     st.markdown(
         """
         <style>
+        /* Hide auto-discovered page navigation */
+        [data-testid="stSidebarNav"] { display: none !important; }
+        
         .ii-main-header {
             font-size: 2rem;
             font-weight: 700;

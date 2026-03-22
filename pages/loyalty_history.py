@@ -88,6 +88,21 @@ def show_email_history():
     with col_f2:
         status_filter = st.selectbox("Filter by status", ["All", "Sent", "Failed"])
 
+    # ── VALIDATION FOR FILTERS ──────────────────────────
+    filter_errors = []
+    
+    if search and len(search) > 100:
+        filter_errors.append("❌ Search term cannot exceed 100 characters")
+    if search and len(search) < 2:
+        filter_errors.append("ℹ️ Search term must be at least 2 characters to filter")
+    if status_filter not in ["All", "Sent", "Failed"]:
+        filter_errors.append("❌ Invalid status filter selected")
+    
+    if filter_errors:
+        for error in filter_errors:
+            st.warning(error)
+        st.stop()
+
     logs = db.fetch_all("""
         SELECT el.email_log_id,
                c.first_name,
@@ -104,28 +119,44 @@ def show_email_history():
         LIMIT 200
     """)
 
-    if logs:
-        df = pd.DataFrame(logs, columns=[
-            'ID', 'Customer', 'Email', 'Type',
-            'Subject', 'Sent', 'Status', 'Opened', 'Clicked'
-        ])
-
-        # Apply filters
-        if search:
-            df = df[
-                df['Customer'].str.contains(search, case=False, na=False) |
-                df['Email'].str.contains(search, case=False, na=False)
-            ]
-        if status_filter != "All":
-            df = df[df['Status'] == status_filter.lower()]
-
-        df['Status']  = df['Status'].apply(
-            lambda x: '✅ Sent' if x == 'sent' else '❌ Failed'
-        )
-        df['Opened']  = df['Opened'].apply(lambda x: '✅' if x else '—')
-        df['Clicked'] = df['Clicked'].apply(lambda x: '✅' if x else '—')
-
-        st.markdown(f"Showing **{len(df)}** records")
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
+    # ── VALIDATION FOR RESULTS ──────────────────────────
+    if not logs:
         st.info("No emails found.")
+        st.stop()
+
+    df = pd.DataFrame(logs, columns=[
+        'ID', 'Customer', 'Email', 'Type',
+        'Subject', 'Sent', 'Status', 'Opened', 'Clicked'
+    ])
+    
+    # Validate dataframe integrity
+    if df.empty:
+        st.error("❌ Email data is corrupted or unavailable.")
+        st.stop()
+
+    # Apply filters
+    original_count = len(df)
+    
+    if search and len(search.strip()) > 0:
+        df = df[
+            df['Customer'].str.contains(search, case=False, na=False) |
+            df['Email'].str.contains(search, case=False, na=False)
+        ]
+    
+    if status_filter != "All":
+        df = df[df['Status'] == status_filter.lower()]
+
+    df['Status']  = df['Status'].apply(
+        lambda x: '✅ Sent' if x == 'sent' else '❌ Failed'
+    )
+    df['Opened']  = df['Opened'].apply(lambda x: '✅' if x else '—')
+    df['Clicked'] = df['Clicked'].apply(lambda x: '✅' if x else '—')
+
+    # Show results with filter info
+    if len(df) == 0 and search:
+        st.info(f"No emails match '{search}'. Try a different search term.")
+    elif len(df) == 0 and status_filter != "All":
+        st.info(f"No {status_filter.lower()} emails found.")
+    else:
+        st.markdown(f"Showing **{len(df)}** of **{original_count}** records")
+        st.dataframe(df, use_container_width=True, hide_index=True)
