@@ -216,6 +216,42 @@ elif page == "short_shipment":
         '<div class="footer">Sunrise Supermarket · Short-Shipment Detector · SLIIT</div>',
         unsafe_allow_html=True,
     )
+# ── Route: smart inventory intake ────────────────────────────────────────────
+elif page == "inventory_intake":
+    from ui.styles import inject_styles
+    from services.auth_service import get_current_user, logout
+    from pages.inventory_intake_page import render_inventory_intake
+
+    inject_styles()
+
+    col_back, col_title, col_user = st.columns([1, 5, 1])
+    with col_back:
+        if st.button("← Hub", key="back_inventory"):
+            st.session_state.current_page = "main_dashboard"
+            st.rerun()
+    with col_title:
+        st.markdown(
+            '<p class="main-header">🏪 Smart Inventory Intake</p>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<p class="sub-header">AI-assisted receiving validation and anomaly capture</p>',
+            unsafe_allow_html=True,
+        )
+    with col_user:
+        user = get_current_user()
+        if user:
+            st.caption(f"👤 {user.get('username','').capitalize()}")
+        if st.button("Logout", key="inventory_logout"):
+            logout()
+
+    st.markdown("---")
+    render_inventory_intake()
+
+    st.markdown(
+        '<div class="footer">Sunrise Supermarket · Smart Inventory Intake · SLIIT</div>',
+        unsafe_allow_html=True,
+    )
 # ── Route: waste & performance monitor ───────────────────────────────────────
 elif page == "waste_monitor":
     from services.auth_service import get_current_user, logout

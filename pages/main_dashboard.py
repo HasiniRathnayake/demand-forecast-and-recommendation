@@ -97,7 +97,7 @@ def render_main_dashboard() -> None:
                         "update inventory on arrival.",
                 "page": "inventory_intake",
                 "color": "#D97706",
-                "ready": False,
+                "ready": True,
             },
             {
                 "icon": "🎁",
