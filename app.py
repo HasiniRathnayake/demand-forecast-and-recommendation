@@ -216,6 +216,42 @@ elif page == "short_shipment":
         '<div class="footer">Sunrise Supermarket · Short-Shipment Detector · SLIIT</div>',
         unsafe_allow_html=True,
     )
+# ── Route: stock replenishment ────────────────────────────────────────────────
+elif page == "stock_replenishment":
+    from ui.styles import inject_styles
+    from services.auth_service import get_current_user, logout
+    inject_styles()
+
+    col_back, col_title, col_user = st.columns([1, 5, 1])
+    with col_back:
+        if st.button("← Hub", key="back_replenish"):
+            st.session_state.current_page = "main_dashboard"
+            st.rerun()
+    with col_title:
+        st.markdown(
+            '<p class="main-header">📦 Stock Replenishment</p>',
+            unsafe_allow_html=True
+        )
+        st.markdown(
+            '<p class="sub-header">Automated ML stock replenishment suggestions</p>',
+            unsafe_allow_html=True
+        )
+    with col_user:
+        user = get_current_user()
+        if user:
+            st.caption(f"👤 {user.get('username','').capitalize()}")
+        if st.button("Logout", key="replenish_logout"):
+            logout()
+
+    st.markdown("---")
+
+    from pages.stock_replenishment import render_stock_replenishment
+    render_stock_replenishment()
+
+    st.markdown(
+        '<div class="footer">Sunrise Supermarket · Stock Replenishment · SLIIT</div>',
+        unsafe_allow_html=True,
+    )
 # ── Fallback ───────────────────────────────────────────────────────────────────
 else:
     st.session_state.current_page = "login"

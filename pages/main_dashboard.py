@@ -79,7 +79,7 @@ def render_main_dashboard() -> None:
                         "demand forecasts and current inventory.",
                 "page": "stock_replenishment",
                 "color": "#7C3AED",
-                "ready": False,
+                "ready": True,
             },
             {
                 "icon": "🚚",
