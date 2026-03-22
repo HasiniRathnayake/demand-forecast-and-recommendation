@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+    <title>Waste &amp; Performance Monitor — Sunrise Super</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="../shared.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="sidebar-brand">
+                <div class="sidebar-logo">☀️ Sunrise Super</div>
+                <div class="sidebar-sub">Waste &amp; Performance</div>
+            </div>
+            <div class="sidebar-section">Navigation</div>
+            <a class="nav-item active" id="nav-overview" href="#">
+                <span class="icon">📊</span> Overview
+            </a>
+            <a class="nav-item" id="nav-waste" href="#">
+                <span class="icon">🗑️</span> Waste Log
+            </a>
+            <a class="nav-item" id="nav-comparison" href="#">
+                <span class="icon">📉</span> Forecast vs Actual
+            </a>
+            <a class="nav-item" id="nav-roi" href="#">
+                <span class="icon">💰</span> ROI Report
+            </a>
+            <div class="sidebar-section">System</div>
+            <a class="nav-item" href="../index.html"><span class="icon">🏠</span> All Dashboards</a>
+            <div class="sidebar-footer">
+                <div class="member-tag">
+                    <strong>Rajakaruna R.K.S.D</strong>
+                    IT24103258 · Module 02
+                </div>
+            </div>
+        </aside>
+
+        <div class="main">
+            <div class="topbar">
+                <div class="topbar-left">
+                    <h1 id="page-title">Overview</h1>
+                    <p id="page-sub">Waste tracking and performance monitoring</p>
+                </div>
+                <div class="topbar-right">
+                    <span id="last-updated" class="text-muted">Loading…</span>
+                    <button class="btn btn-secondary btn-sm" id="btn-refresh">↻ Refresh</button>
+                    <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode"><span
+                            class="tt-icon tt-sun">☀️</span><span class="tt-knob"></span><span
+                            class="tt-icon tt-moon">🌙</span></button>
+                    <button class="btn btn-primary btn-sm" id="btn-add-waste">+ Log Waste</button>
+                </div>
+            </div>
+
+            <div class="content">
+
+                <!-- OVERVIEW -->
+                <div class="view active" id="view-overview">
+                    <div class="kpi-grid">
+                        <div class="kpi-card red">
+                            <div class="kpi-icon">🗑️</div>
+                            <div class="kpi-value" id="kpi-total-waste">—</div>
+                            <div class="kpi-label">Total Waste Units (30d)</div>
+                        </div>
+                        <div class="kpi-card amber">
+                            <div class="kpi-icon">💸</div>
+                            <div class="kpi-value" id="kpi-waste-cost">—</div>
+                            <div class="kpi-label">Waste Cost KWD</div>
+                        </div>
+                        <div class="kpi-card blue">
+                            <div class="kpi-icon">🎯</div>
+                            <div class="kpi-value" id="kpi-forecast-acc">—%</div>
+                            <div class="kpi-label">Forecast Accuracy</div>
+                        </div>
+                        <div class="kpi-card green">
+                            <div class="kpi-icon">💰</div>
+                            <div class="kpi-value" id="kpi-saved">—</div>
+                            <div class="kpi-label">Cost Saved by AI (KWD)</div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">📉 Waste Over Time (Last 12 Weeks)</span>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-container">
+                                <canvas id="waste-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">⚠️ Top Waste Offenders (This Month)</span>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>SKU</th>
+                                        <th>Product</th>
+                                        <th>Waste Units</th>
+                                        <th>Cost KWD</th>
+                                        <th>Reason</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="top-waste-tbody">
+                                    <tr>
+                                        <td colspan="5" class="loading-row">Loading…</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- WASTE LOG -->
+                <div class="view" id="view-waste">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">🗑️ Waste Log</span>
+                            <div class="toolbar">
+                                <div class="search-box">
+                                    <input type="text" id="search-waste" placeholder="Search SKU or product…" />
+                                </div>
+                                <select class="form-control" id="filter-reason" style="width:160px">
+                                    <option value="">All Reasons</option>
+                                    <option>Expired</option>
+                                    <option>Damaged</option>
+                                    <option>Overstock</option>
+                                    <option>Quality Issue</option>
+                                    <option>Other</option>
+                                </select>
+                                <button class="btn btn-secondary btn-sm" id="btn-export-csv">⬇ Export CSV</button>
+                            </div>
+                        </div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>SKU</th>
+                                        <th>Product</th>
+                                        <th>Waste Qty</th>
+                                        <th>Unit Cost (KWD)</th>
+                                        <th>Total Cost</th>
+                                        <th>Reason</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="waste-tbody">
+                                    <tr>
+                                        <td colspan="8" class="loading-row">No waste records yet.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination">
+                            <span class="page-info" id="page-info">—</span>
+                            <button class="btn btn-secondary btn-sm" id="btn-prev">‹ Prev</button>
+                            <button class="btn btn-secondary btn-sm" id="btn-next">Next ›</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- FORECAST VS ACTUAL -->
+                <div class="view" id="view-comparison">
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">📉 Forecast vs Actual Comparison</span>
+                            <select class="form-control" id="comp-sku-filter" style="width:200px">
+                                <option value="">All SKUs</option>
+                            </select>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-container">
+                                <canvas id="comparison-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">📋 Detailed Comparison Table</span></div>
+                        <div class="table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>SKU</th>
+                                        <th>Product</th>
+                                        <th>Date</th>
+                                        <th>Forecast Qty</th>
+                                        <th>Actual Qty</th>
+                                        <th>Variance</th>
+                                        <th>Variance %</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="comparison-tbody">
+                                    <tr>
+                                        <td colspan="7" class="loading-row">Loading…</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ROI REPORT -->
+                <div class="view" id="view-roi">
+                    <div class="kpi-grid">
+                        <div class="kpi-card green">
+                            <div class="kpi-icon">💰</div>
+                            <div class="kpi-value" id="roi-saved">—</div>
+                            <div class="kpi-label">Total Cost Saved (KWD)</div>
+                        </div>
+                        <div class="kpi-card red">
+                            <div class="kpi-icon">📉</div>
+                            <div class="kpi-value" id="roi-waste">—</div>
+                            <div class="kpi-label">Total Waste Cost (KWD)</div>
+                        </div>
+                        <div class="kpi-card blue">
+                            <div class="kpi-icon">📊</div>
+                            <div class="kpi-value" id="roi-reduction">—%</div>
+                            <div class="kpi-label">Waste Reduction Rate</div>
+                        </div>
+                        <div class="kpi-card amber">
+                            <div class="kpi-icon">📆</div>
+                            <div class="kpi-value" id="roi-months">—</div>
+                            <div class="kpi-label">Months Tracked</div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <span class="card-title">💰 Monthly ROI Breakdown</span>
+                            <button class="btn btn-secondary btn-sm" id="btn-export-roi">⬇ Export Report</button>
+                        </div>
+                        <div class="card-body">
+                            <div class="chart-container">
+                                <canvas id="roi-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><span class="card-title">ℹ️ How AI Savings Are Calculated</span></div>
+                        <div class="card-body">
+                            <div class="alert alert-info">
+                                💡 AI savings = (Forecast Accuracy × Avg Monthly Waste Cost). A 10% improvement in
+                                forecast accuracy
+                                directly reduces overstock and expiry waste. The system compares the current actual
+                                waste cost
+                                against what it would have been at 50% accuracy (baseline manual ordering).
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Waste Modal -->
+    <div class="modal-overlay" id="waste-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <span class="modal-title" id="waste-modal-title">Log Waste</span>
+                <button class="modal-close" id="waste-modal-close">✕</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="wm-id" />
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label class="form-label">SKU *</label>
+                        <input class="form-control" id="wm-sku" placeholder="e.g. ST30244" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Product Name</label>
+                        <input class="form-control" id="wm-name" placeholder="e.g. Rice 5kg" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Date *</label>
+                        <input class="form-control" type="date" id="wm-date" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Waste Qty *</label>
+                        <input class="form-control" type="number" id="wm-qty" placeholder="0" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Unit Cost KWD</label>
+                        <input class="form-control" type="number" step="0.001" id="wm-cost" placeholder="0.000" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Forecast Qty (expected)</label>
+                        <input class="form-control" type="number" id="wm-forecast" placeholder="0" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Actual Qty (sold)</label>
+                        <input class="form-control" type="number" id="wm-actual" placeholder="0" />
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Waste Reason *</label>
+                        <select class="form-control" id="wm-reason">
+                            <option>Expired</option>
+                            <option>Damaged</option>
+                            <option>Overstock</option>
+                            <option>Quality Issue</option>
+                            <option>Other</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Notes</label>
+                    <textarea class="form-control" id="wm-notes" placeholder="Additional notes…"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="waste-modal-cancel">Cancel</button>
+                <button class="btn btn-primary" id="waste-modal-save">Save Record</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+    <script src="../theme.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>
