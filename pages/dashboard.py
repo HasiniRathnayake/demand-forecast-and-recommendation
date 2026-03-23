@@ -14,6 +14,7 @@ from utils.helpers  import fmt_date, fmt_pct, format_lkr
 
 def show_dashboard(start: date, end: date) -> None:
 
+    st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
     waste_df = fetch_waste_records(start, end)
     ai_df    = fetch_ai_performance(start, end)
 
