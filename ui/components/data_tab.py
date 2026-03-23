@@ -1,4 +1,5 @@
 """
+Data & Export
 Sub-tabs:
   1. Historical Data  — paginated table + CSV download
   2. Forecast Data    — forecast table with override indicators + CSV download
@@ -182,7 +183,7 @@ def _render_manual_override(forecast_df: pd.DataFrame, product: dict) -> None:
         return
 
     # ── Initialize session state flags ─────────────────────────────────────────
-    # These prevent balloons re-firing when switching tabs
+    # These prevent success message re-firing when switching tabs
     if "override_saved" not in st.session_state:
         st.session_state.override_saved = False
     if "override_saved_for" not in st.session_state:
@@ -297,8 +298,7 @@ def _render_manual_override(forecast_df: pd.DataFrame, product: dict) -> None:
                 f"✅ Override saved for {selected_date}: **{override_val:.0f} units** "
                 f"(AI was {current_val:.0f}). Reason: {override_reason}"
             )
-        st.balloons()
-        # Reset flag immediately so balloons don't re-fire
+        # Reset flag immediately so success doesn't re-fire
         st.session_state.override_saved = False
 
 

@@ -180,26 +180,38 @@ def _build_forecast_chart(
                 ),
                 hovertemplate="<b>%{x|%d %b}</b><br>Original AI: %{y:.0f} units<extra>Overridden</extra>",
             ))
-            # Override values as bold stars
+            # Override values as bold stars — one trace per override point
+            # so each star renders independently with its own hover text
+            for ov_d, ov_v, ov_r in zip(ov_dates, ov_vals, ov_reasons):
+                fig.add_trace(go.Scatter(
+                    x=[ov_d],
+                    y=[ov_v],
+                    mode="markers+text",
+                    name="Manual Override",
+                    text=["✏️"],
+                    textposition="top center",
+                    showlegend=False,
+                    marker=dict(
+                        size=14,
+                        color="#7C3AED",
+                        symbol="star",
+                        line=dict(color="white", width=1.5),
+                    ),
+                    hovertemplate=(
+                        f"<b>{ov_d.strftime('%d %b')}</b><br>"
+                        f"Override: <b>{ov_v:.0f} units</b><br>"
+                        f"Reason: {ov_r or 'Manual override'}"
+                        "<extra>Manual Override</extra>"
+                    ),
+                ))
+            # Add one invisible trace just for the legend entry
             fig.add_trace(go.Scatter(
-                x=ov_dates,
-                y=ov_vals,
-                mode="markers+text",
+                x=[None], y=[None],
+                mode="markers",
                 name="Manual Override",
-                text=["✏️"] * len(ov_dates),
-                textposition="top center",
-                marker=dict(
-                    size=14,
-                    color="#7C3AED",
-                    symbol="star",
-                    line=dict(color="white", width=1.5),
-                ),
-                hovertemplate=(
-                    "<b>%{x|%d %b}</b><br>"
-                    "Override: <b>%{y:.0f} units</b><br>"
-                    "Reason: " + "<br>".join(r for r in ov_reasons if r) +
-                    "<extra>Manual Override</extra>"
-                ),
+                marker=dict(size=14, color="#7C3AED", symbol="star",
+                            line=dict(color="white", width=1.5)),
+                showlegend=True,
             ))
 
     return fig

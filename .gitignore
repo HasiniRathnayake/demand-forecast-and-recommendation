@@ -1,6 +1,22 @@
-node_modules/
+code .gitignore
+```
+
+You'll see conflict markers. Replace everything with this clean version:
+```
 .env
-.gemini/
+venv/
+venv311/
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+.streamlit/secrets.toml
+*.egg-info/
+dist/
+build/
 .DS_Store
+Thumbs.db
+*.db
+supermarket.db
+test_env.py
+test_supabase.py
