@@ -26,6 +26,8 @@ class EmailSender:
         name         = offer['customer_name']
         offer_text   = offer['offer_text']
         discount_pct = offer['discount_pct']
+        promo_start  = offer.get('promo_start')
+        promo_end    = offer.get('promo_end')
         friendly_segments = {
             'VIP Customer':     'VIP Member',
             'High Value':       'Valued Member',
@@ -37,6 +39,11 @@ class EmailSender:
         }
         segment = friendly_segments.get(offer['segment'], 'Loyalty Member')
         recommended  = offer['recommended']
+        validity_line = (
+            f"Use at checkout — valid from {promo_start} to {promo_end}"
+            if promo_start and promo_end else
+            "Use at checkout — valid this week only"
+        )
 
         # Build product cards
         product_rows = ""
@@ -78,7 +85,7 @@ class EmailSender:
                     <!-- Offer Badge -->
                     <div style="background:#fff3cd;border:2px dashed #f39c12;border-radius:10px;padding:20px;text-align:center;margin:20px 0;">
                         <h2 style="color:#e67e22;margin:0;font-size:32px;">🎉 {offer_text}</h2>
-                        <p style="color:#888;margin:8px 0 0;">Use at checkout — valid this week only</p>
+                        <p style="color:#888;margin:8px 0 0;">{validity_line}</p>
                     </div>
 
                     <!-- Recommended Products -->
@@ -128,6 +135,158 @@ class EmailSender:
         except Exception as e:
             return False, str(e)
 
+    def queue_scheduled_emails(self, offers, send_date, test_mode=False):
+        """Queue emails for future sending in email_log with status='scheduled'."""
+        queued = 0
+        skipped = 0
+        failed = 0
+        results = []
+
+        for offer in offers:
+            if not offer.get('email_enabled') or not offer.get('promo_allowed'):
+                skipped += 1
+                results.append({
+                    'name': offer['customer_name'],
+                    'email': offer['email'],
+                    'status': 'skipped',
+                    'reason': 'Email notifications disabled'
+                })
+                continue
+
+            try:
+                subject = f"🎉 {offer['offer_text']} — Sunrise Super"
+                html_content = self.build_email_html(offer)
+                email_type = 'promotional_scheduled_test' if test_mode else 'promotional_scheduled'
+
+                ok = self.db.execute_query(
+                    """
+                    INSERT INTO email_log
+                    (customer_id, email_type, subject, email_content,
+                     sent_date, delivery_status, opened, clicked)
+                    VALUES (%s, %s, %s, %s, %s, 'scheduled', FALSE, FALSE)
+                    """,
+                    [offer['customer_id'], email_type, subject, html_content, send_date]
+                )
+
+                if ok:
+                    queued += 1
+                    results.append({
+                        'name': offer['customer_name'],
+                        'email': offer['email'],
+                        'status': 'scheduled',
+                        'reason': str(send_date)
+                    })
+                else:
+                    failed += 1
+                    results.append({
+                        'name': offer['customer_name'],
+                        'email': offer['email'],
+                        'status': 'failed',
+                        'reason': 'Failed to queue in email_log'
+                    })
+            except Exception as e:
+                failed += 1
+                results.append({
+                    'name': offer.get('customer_name', '-'),
+                    'email': offer.get('email', '-'),
+                    'status': 'failed',
+                    'reason': str(e)
+                })
+
+        return {
+            'queued': queued,
+            'skipped': skipped,
+            'failed': failed,
+            'results': results,
+        }
+
+    def process_due_scheduled_emails(self):
+        """Send all scheduled emails due today or earlier."""
+        due_rows = self.db.fetch_all(
+            """
+            SELECT el.email_log_id, el.customer_id, el.subject, el.email_content,
+                   el.email_type, c.first_name, c.email
+            FROM email_log el
+            JOIN customers c ON el.customer_id = c.customer_id
+            WHERE el.delivery_status = 'scheduled'
+              AND DATE(el.sent_date) <= CURRENT_DATE
+            ORDER BY el.sent_date, el.email_log_id
+            """
+        )
+
+        if not due_rows:
+            return {'sent': 0, 'failed': 0, 'total_due': 0, 'results': []}
+
+        results = []
+        sent = 0
+        failed = 0
+
+        try:
+            server = smtplib.SMTP(self.smtp_host, self.smtp_port)
+            server.starttls()
+            server.login(self.email_user, self.email_pass)
+        except Exception as e:
+            return {
+                'sent': 0,
+                'failed': len(due_rows),
+                'total_due': len(due_rows),
+                'results': [{'name': 'All', 'email': '-', 'status': 'failed', 'reason': str(e)}],
+            }
+
+        for row in due_rows:
+            log_id, _customer_id, subject, html_content, email_type, first_name, customer_email = row
+            target_email = self.email_user if email_type == 'promotional_scheduled_test' else customer_email
+
+            try:
+                msg = MIMEMultipart('alternative')
+                msg['Subject'] = subject
+                msg['From'] = self.email_from
+                msg['To'] = target_email
+                msg.attach(MIMEText(html_content, 'html'))
+
+                server.sendmail(self.email_from, target_email, msg.as_string())
+
+                self.db.execute_query(
+                    """
+                    UPDATE email_log
+                    SET delivery_status = 'sent', sent_date = CURRENT_TIMESTAMP
+                    WHERE email_log_id = %s
+                    """,
+                    [log_id]
+                )
+                sent += 1
+                results.append({
+                    'name': first_name or 'Customer',
+                    'email': customer_email,
+                    'status': 'sent',
+                    'reason': 'Scheduled email sent'
+                })
+            except Exception as e:
+                self.db.execute_query(
+                    """
+                    UPDATE email_log
+                    SET delivery_status = 'failed'
+                    WHERE email_log_id = %s
+                    """,
+                    [log_id]
+                )
+                failed += 1
+                results.append({
+                    'name': first_name or 'Customer',
+                    'email': customer_email,
+                    'status': 'failed',
+                    'reason': str(e)
+                })
+
+        server.quit()
+
+        return {
+            'sent': sent,
+            'failed': failed,
+            'total_due': len(due_rows),
+            'results': results,
+        }
+
     def log_email(self, customer_id, email_type, subject, html_content, status, segment=None):
         """Save email record to email_log table with simulated engagement"""
         import random
@@ -166,14 +325,6 @@ class EmailSender:
         """, [customer_id, email_type, subject, html_content,
               delivery_status, opened, clicked])
         print(f"DEBUG: Log result = {result}")
-        
-        self.db.execute_query("""
-            INSERT INTO email_log
-            (customer_id, email_type, subject, email_content,
-             sent_date, delivery_status, opened, clicked)
-            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s)
-        """, [customer_id, email_type, subject, html_content,
-              delivery_status, opened, clicked])
 
     def send_promotional_emails(self, offers, test_mode=False):
         sent    = 0
