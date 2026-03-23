@@ -24,14 +24,14 @@ def render_sidebar() -> tuple[date, date]:
             "Period",
             ["All Time", "Today", "Last 7 Days", "Last 30 Days", "Last 90 Days", "Custom"],
             label_visibility="collapsed",
-            key="wpm_period",
+            key="waste_period",
         )
 
         today = date.today()
 
         if period == "Custom":
-            start = st.date_input("Start Date", today - timedelta(days=30), key="wpm_start")
-            end   = st.date_input("End Date", today, key="wpm_end")
+            start = st.date_input("Start Date", today - timedelta(days=30), key="waste_start")
+            end   = st.date_input("End Date", today, key="waste_end")
             if start > end:
                 st.warning("Start date is after end date.")
                 start, end = end, start
