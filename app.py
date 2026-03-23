@@ -126,6 +126,24 @@ elif page == "customer_dashboard":
 
     from pages.customer_dashboard import show_customer_dashboard
     show_customer_dashboard(user.get('customer_id'))
+
+elif page == "customer_settings":
+    from ui.styles import inject_styles
+    from services.auth_service import get_current_user
+    inject_styles()
+
+    user = get_current_user()
+    if not user or user.get('role') != 'customer':
+        st.session_state.current_page = "main_dashboard"
+        st.rerun()
+
+    if st.button("← Back to Dashboard", key="back_customer_settings"):
+        st.session_state.current_page = "customer_dashboard"
+        st.rerun()
+
+    from pages.customer_settings import show_customer_settings
+    show_customer_settings(user.get('customer_id'))
+
 # ── Route: loyalty module ─────────────────────────────────────────────────────
 elif page == "loyalty":
     from ui.styles import inject_styles
@@ -216,6 +234,124 @@ elif page == "short_shipment":
         '<div class="footer">Sunrise Supermarket · Short-Shipment Detector · SLIIT</div>',
         unsafe_allow_html=True,
     )
+# ── Route: smart inventory intake ────────────────────────────────────────────
+elif page == "inventory_intake":
+    from ui.styles import inject_styles
+    from services.auth_service import get_current_user, logout
+    from pages.inventory_intake_page import render_inventory_intake
+
+    inject_styles()
+
+    col_back, col_title, col_user = st.columns([1, 5, 1])
+    with col_back:
+        if st.button("← Hub", key="back_inventory"):
+            st.session_state.current_page = "main_dashboard"
+            st.rerun()
+    with col_title:
+        st.markdown(
+            '<p class="main-header">🏪 Smart Inventory Intake</p>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<p class="sub-header">AI-assisted receiving validation and anomaly capture</p>',
+            unsafe_allow_html=True,
+        )
+    with col_user:
+        user = get_current_user()
+        if user:
+            st.caption(f"👤 {user.get('username','').capitalize()}")
+        if st.button("Logout", key="inventory_logout"):
+            logout()
+
+    st.markdown("---")
+    render_inventory_intake()
+
+    st.markdown(
+        '<div class="footer">Sunrise Supermarket · Smart Inventory Intake · SLIIT</div>',
+        unsafe_allow_html=True,
+    )
+# ── Route: waste & performance monitor ───────────────────────────────────────
+elif page == "waste_monitor":
+    from services.auth_service import get_current_user, logout
+    from waste_monitor.ui.styles import inject_styles as inject_wpm_styles
+    from waste_monitor.ui.sidebar import render_sidebar as render_wpm_sidebar
+    from waste_monitor.pages.dashboard import show_dashboard as show_wpm_dashboard
+    from waste_monitor.pages.waste_records import show_waste_records as show_wpm_waste_records
+    from waste_monitor.pages.ai_performance import show_ai_performance as show_wpm_ai_performance
+    from waste_monitor.pages.savings_report import show_savings_report as show_wpm_savings_report
+
+    inject_wpm_styles()
+
+    user = get_current_user() or {}
+    role = user.get("role", "")
+    username = user.get("username", "User").capitalize()
+
+    if role not in ("staff", "admin"):
+        st.session_state.current_page = "main_dashboard"
+        st.rerun()
+
+    if "wpm_page" not in st.session_state:
+        st.session_state.wpm_page = "Dashboard"
+
+    start, end = render_wpm_sidebar()
+    wpm_page = st.session_state.get("wpm_page", "Dashboard")
+
+    if wpm_page == "Dashboard":
+        col_hub, col_title, col_spacer, col_user, col_logout = st.columns([1, 4, 2, 1, 1])
+
+        with col_hub:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("← Hub", key="hub_btn"):
+                st.session_state.current_page = "main_dashboard"
+                st.session_state.wpm_page = "Dashboard"
+                st.rerun()
+
+        with col_title:
+            st.markdown(
+                """
+                <div style="text-align:center;padding-top:0.3rem">
+                    <span style="font-size:2.2rem;font-weight:700;color:#2563EB;">
+                        📊 Sunrise Supermarket
+                    </span><br>
+                    <span style="font-size:1.1rem;color:#64748B;">
+                        Waste &amp; Performance Monitor
+                    </span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with col_spacer:
+            pass
+
+        with col_user:
+            pass
+
+        with col_logout:
+            st.markdown(
+                f'<div style="text-align:center;color:#374151;'
+                f'font-size:0.82rem;font-weight:500;margin-bottom:0px;'
+                f'padding-top:0.4rem;">👤 {username}</div>',
+                unsafe_allow_html=True,
+            )
+            if st.button("Logout", key="wpm_logout", use_container_width=True):
+                logout()
+
+        st.markdown("---")
+        show_wpm_dashboard(start, end)
+
+    elif wpm_page == "Waste Records":
+        show_wpm_waste_records(start, end)
+
+    elif wpm_page == "AI Performance":
+        show_wpm_ai_performance(start, end)
+
+    elif wpm_page == "Savings Report":
+        show_wpm_savings_report()
+
+    else:
+        st.session_state.wpm_page = "Dashboard"
+        st.rerun()
 # ── Fallback ───────────────────────────────────────────────────────────────────
 else:
     st.session_state.current_page = "login"
