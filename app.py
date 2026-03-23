@@ -386,8 +386,6 @@ elif page == "waste_monitor":
     with tab5:
         show_savings_report()
 
-    
->>>>>>> 2e77f5ac08bb28ff3438dcbb62086e8a69ea77de
 # ── Fallback ───────────────────────────────────────────────────────────────────
 else:
     st.session_state.current_page = "login"
