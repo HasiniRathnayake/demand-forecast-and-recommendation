@@ -8,9 +8,9 @@ from datetime import date, datetime
 import time
 import plotly.express as px
 import streamlit as st
-from waste_monitor.utils.database   import fetch_waste_records, insert_waste_record, product_code_exists
-from waste_monitor.utils.helpers    import format_lkr, fmt_date, fmt_datetime
-from waste_monitor.utils.validators import (
+from utils.database   import fetch_waste_records, insert_waste_record, product_code_exists
+from utils.helpers    import format_lkr, fmt_date, fmt_datetime
+from utils.validators import (
     VALID_WASTE_REASONS, MAX_PRICE_PER_KG, MAX_QUANTITY_KG,
     validate_waste_record_form,
 )
@@ -56,9 +56,9 @@ div[data-testid="stForm"] div.stButton > button:hover {
                 )
                 quantity = st.number_input(
                     "Quantity Wasted (kg) *",
-                    min_value=0.001,
+                    min_value=0.01,
                     max_value=float(MAX_QUANTITY_KG),
-                    value=0.001,
+                    value=0.01,
                     step=0.1,
                     format="%.3f",
                     help=f"Must be greater than 0. Maximum: {MAX_QUANTITY_KG:,} kg.",

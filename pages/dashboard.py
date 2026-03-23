@@ -8,17 +8,18 @@ from datetime import date
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-from waste_monitor.utils.database import fetch_ai_performance, fetch_waste_records
-from waste_monitor.utils.helpers  import fmt_date, fmt_pct, format_lkr
+from utils.database import fetch_ai_performance, fetch_waste_records
+from utils.helpers  import fmt_date, fmt_pct, format_lkr
 
 
 def show_dashboard(start: date, end: date) -> None:
 
+    st.markdown("<div style='margin-top:1.5rem'></div>", unsafe_allow_html=True)
     waste_df = fetch_waste_records(start, end)
     ai_df    = fetch_ai_performance(start, end)
 
-    k1, k2, k3, k4, k5 = st.columns(5)
-
+    k1, k2, k3, k4, k5 = st.columns([1.2, 1.5, 1.5, 1.2, 1.2])
+    
     total_waste = float(waste_df["quantity_wasted"].sum()) if not waste_df.empty else 0.0
     total_loss  = float(waste_df["estimated_loss"].sum())  if not waste_df.empty else 0.0
 
