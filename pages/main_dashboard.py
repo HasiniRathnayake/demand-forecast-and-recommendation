@@ -11,6 +11,12 @@ from ui.styles import inject_styles
 from services.auth_service import require_auth, get_current_user, get_user_role, logout
 def render_main_dashboard() -> None:
     inject_styles()
+    # Hide auto-discovered page navigation
+    st.markdown("""
+        <style>
+        [data-testid="stSidebarNav"] { display: none !important; }
+        </style>
+    """, unsafe_allow_html=True)
     require_auth()
 
     user = get_current_user()
@@ -70,7 +76,7 @@ def render_main_dashboard() -> None:
                         "across categories.",
                 "page": "waste_monitor",
                 "color": "#059669",
-                "ready": False,
+                "ready": True,
             },
             {
                 "icon": "📦",
@@ -97,7 +103,7 @@ def render_main_dashboard() -> None:
                         "update inventory on arrival.",
                 "page": "inventory_intake",
                 "color": "#D97706",
-                "ready": False,
+                "ready": True,
             },
             {
                 "icon": "🎁",
