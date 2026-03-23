@@ -1,155 +1,129 @@
-# 📊 Demand Forecast Dashboard — Sunrise Supermarket
+# Sunrise Supermarket AI Platform
 
-**IT2021 AIML Project | Group 2026-Y2-S2-KU-AI-02**  
-**Developer:** Rathnayake R.M.H.T — Demand Forecast Dashboard & Model Training
+Integrated Streamlit platform for supermarket operations and customer engagement.
 
----
+## Modules
 
-## Overview
-
-AI-powered demand forecasting dashboard for Sunrise Supermarket, Kandy, Sri Lanka.  
-Predicts future demand for 6 key product categories using XGBoost & Random Forest models.
-
-### Focused Product Categories
-`Sugar` | `Rice` | `Flour` | `Dairy` | `Oil` | `Beverages`
-
----
+- Demand Forecasting
+- Smart Loyalty & Promotions
+- Customer Dashboard
+- Smart Inventory Intake
+- Short-Shipment Detector
+- Waste & Performance Monitor
 
 ## Tech Stack
 
-| Layer        | Technology                  |
-|-------------|-----------------------------|
-| Frontend     | Streamlit                   |
-| Backend      | Python 3.11                 |
-| Database     | Supabase (PostgreSQL)       |
-| Visualization| Plotly                      |
-| ML (Future)  | Scikit-learn, XGBoost, RF   |
-| Weather API  | OpenWeatherMap (Kandy, LK)  |
-
----
+- Python 3.11+
+- Streamlit
+- PostgreSQL (local via `DATABASE_URL`)
+- Supabase (authentication/user records)
+- Plotly
 
 ## Project Structure
 
-```
-demand-forecast-dashboard/
-├── app.py                  ← Entry point
-├── config/settings.py      ← Config & constants
-├── data/                   ← Database layer
-├── services/               ← Business logic
-├── ml/                     ← Model interface
-├── ui/                     ← UI components
-└── tests/                  ← Unit & validation tests
-```
-
----
-
-## Setup (Local)
-
-### Prerequisites
-- Python 3.11
-- Supabase account with project set up
-
-### 1. Clone & Navigate
-```bash
-git clone <repo-url>
-cd demand-forecast-dashboard
+```text
+app.py
+config/
+data/
+ml/
+pages/
+scripts/
+services/
+tests/
+ui/
+waste_monitor/
+modules/short_shipment_detector/
 ```
 
-### 2. Create Virtual Environment (Python 3.11)
-```bash
-py -3.11 -m venv venv311
-venv311\Scripts\activate   # Windows
-# OR
-source venv311/bin/activate # Mac/Linux
+## Setup
+
+### 1. Create and activate virtual environment
+
+```powershell
+py -3.11 -m venv venv
+venv\Scripts\activate
 ```
 
-### 3. Install Dependencies
-```bash
-pip install -r requirements.txt
+### 2. Install dependencies
+
+```powershell
+pip install -r Requirements.txt
 ```
 
-### 4. Configure Environment
-Create a `.env` file in the root:
+### 3. Configure environment
+
+Create `.env` in project root:
+
 ```env
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_KEY=your_supabase_anon_key
-WEATHER_API_KEY=your_openweathermap_api_key
+DATABASE_URL=postgresql://<user>:<password>@<host>:<port>/<db_name>
+
+SUPABASE_URL=https://<project>.supabase.co
+SUPABASE_KEY=<supabase_anon_or_service_key>
+
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USER=<sender_email>
+EMAIL_PASSWORD=<app_password>
+EMAIL_FROM=<sender_email>
+
+WEATHER_API_KEY=<openweather_api_key>
 ```
 
-> **Weather API**: Get a free key at https://openweathermap.org/api  
-> Currently uses Kandy, LK coordinates (7.2906, 80.6337)
+Notes:
+- Loyalty, customer dashboard, and campaign data are read from PostgreSQL via `DATABASE_URL`.
+- Authentication and registration use Supabase.
+- Keep `.env` strictly in `KEY=VALUE` format (no shell commands in this file).
 
-### 5. Run the Dashboard
-```bash
+### 4. Run app
+
+```powershell
 streamlit run app.py
 ```
 
----
+## Testing
 
-## Switching from Mock → Real ML Model
+### Run unit tests
 
-The system is architected to swap models with minimal code change.
-
-In `ml/model_interface.py`, implement the `BaseForecaster` interface in a new class.  
-In `services/forecast_service.py`, swap `MockForecaster` → your trained model class.
-
-```python
-# services/forecast_service.py — change this one line:
-from ml.mock_forecaster import MockForecaster as ActiveModel
-# → to:
-from ml.xgboost_forecaster import XGBoostForecaster as ActiveModel
+```powershell
+pytest tests -v
 ```
 
----
+### Quick connectivity checks
 
-## Supabase Tables Required
-
-```sql
-product_catalog (product_code, product_name, category, sub_category, 
-                 unit_price, offer_price, package_size, unit_of_measure,
-                 is_perishable, shelf_life_days, is_ai_supported)
-
-daily_sales_history (product_code, transaction_date, quantity_sold, is_promotion)
-
-demand_forecasts (product_code, forecast_date, predicted_demand, confidence_level,
-                  model_version, model_accuracy, created_at)
+```powershell
+python test_env.py
+python test_supabase.py
 ```
 
----
+## Loyalty Campaign Scheduling
 
-## Running Tests
+- Future campaigns are queued in `email_log` with `delivery_status = 'scheduled'`.
+- Sending is triggered by the staff action **Process Due Scheduled Emails** in Campaign Builder.
+- Email History supports filtering by Sent, Failed, and Scheduled.
 
-```bash
-pytest tests/ -v
-```
+## Customer Experience Features
 
----
+- Customer dashboard shows active (non-expired) promotions.
+- Customer settings page allows toggling:
+	- `email_notification_enabled`
+	- `promotional_emails_allowed`
+- Login celebration balloons appear when new promotion alerts are detected.
 
-## Git Workflow
+## Common Troubleshooting
 
-```bash
-# First time
-git checkout -b feature/demand-forecast
+1. Loyalty pages show empty data:
+- Verify `DATABASE_URL` points to the expected PostgreSQL database.
 
-# Regular commits
-git add .
-git commit -m "feat: add forecast tab with confidence intervals"
-git push origin feature/demand-forecast
-```
+2. Customer profile not found:
+- Ensure logged-in user has a valid `customer_id` linked to a row in `customers`.
 
----
+3. Scheduled emails not sending automatically:
+- Use **Process Due Scheduled Emails** (manual trigger), or add an external scheduler.
 
-## Current Status (Progress 2)
+4. Dotenv parsing warnings:
+- Remove non-`.env` lines and keep one `KEY=VALUE` per line.
 
-- [x] Dashboard UI with forecast, historical, and data tabs
-- [x] Mock ML model with XGBoost/RF interface ready
-- [x] Supabase integration (read/write)
-- [x] Weather API integration (Kandy)
-- [x] Input validation & error handling
-- [x] Unit tests
-- [ ] Real XGBoost/RF model training (Progress 3)
-- [ ] Live client sales data integration
+## Team
 
----
-
-*Progress 2 | IT2021 AIML Project | SLIIT*
+SLIIT AIML Project  
+Group: 2026-Y2-S2-KU-AI-02
