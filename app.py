@@ -48,15 +48,13 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "user"          not in st.session_state:
     st.session_state.user          = None
-if "wpm_page"      not in st.session_state:
-    st.session_state.wpm_page      = "Dashboard"
 
 # ── Imports ───────────────────────────────────────────────────────────────────
 from ui.styles            import inject_styles
 from ui.sidebar           import render_sidebar
 from pages.dashboard      import show_dashboard
 from pages.waste_records  import show_waste_records
-from pages.ai_performance import show_ai_performance
+from pages.ai_performance import show_ai_performance_comparison, show_ai_performance_analytics
 from pages.savings_report import show_savings_report
 
 # ── Router ────────────────────────────────────────────────────────────────────
@@ -73,65 +71,71 @@ elif page == "main_dashboard":
 elif page == "waste_monitor":
     inject_styles()
 
-    user       = st.session_state.get("user", {}) or {}
-    username   = user.get("username", "User").capitalize()
-    role       = user.get("role", "staff")
+    user     = st.session_state.get("user", {}) or {}
+    username = user.get("username", "User").capitalize()
 
     start, end = render_sidebar()
-    wpm_page   = st.session_state.get("wpm_page", "Dashboard")
 
-    if wpm_page == "Dashboard":
-        # ── Top nav only on Dashboard ─────────────────────────────────────────
-        col_hub, col_title, col_spacer, col_user, col_logout = st.columns([1, 4, 2, 1, 1])
+    # ── Top header ────────────────────────────────────────────────────────────
+    col_hub, col_title, col_spacer, col_logout = st.columns([1, 4, 3, 1])
 
-        with col_hub:
-            st.markdown("<br>", unsafe_allow_html=True)
-            if st.button("← Hub", key="hub_btn"):
-                st.session_state.current_page = "main_dashboard"
-                st.session_state.wpm_page     = "Dashboard"
-                st.rerun()
+    with col_hub:
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("← Hub", key="hub_btn"):
+            st.session_state.current_page = "main_dashboard"
+            st.rerun()
 
-        with col_title:
-            st.markdown(
-                """
-                <div style="text-align:center;padding-top:0.3rem">
-                    <span style="font-size:2.2rem;font-weight:700;color:#2563EB;">
-                        📊 Sunrise Supermarket
-                    </span><br>
-                    <span style="font-size:1.1rem;color:#64748B;">
-                        Waste &amp; Performance Monitor
-                    </span>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+    with col_title:
+        st.markdown(
+            """
+            <div style="text-align:center;padding-top:0.3rem">
+                <span style="font-size:2.2rem;font-weight:700;color:#2563EB;">
+                    📊 Sunrise Supermarket
+                </span><br>
+                <span style="font-size:1.1rem;color:#64748B;">
+                    Waste &amp; Performance Monitor
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-        with col_spacer:
-            pass
+    with col_spacer:
+        pass
 
-        with col_user:
-            pass
+    with col_logout:
+        st.markdown(
+            f'<div style="text-align:center;color:#374151;font-size:0.82rem;'
+            f'font-weight:500;margin-bottom:0.3rem;">👤 {username}</div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("Logout", key="wpm_logout", use_container_width=True):
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
 
-        with col_logout:
-            st.markdown(
-                f'<div style="text-align:center;color:#374151;'
-                f'font-size:0.82rem;font-weight:500;margin-bottom:0px;'
-                f'padding-top:0.4rem;">👤 {username}</div>',
-                unsafe_allow_html=True,
-            )
-            if st.button("Logout", key="wpm_logout", use_container_width=True):
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                st.rerun()
+    st.markdown("---")
 
-        st.markdown("---")
+    # ── 5 Main Tabs ───────────────────────────────────────────────────────────
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊 Dashboard",
+        "🗑️ Waste Records",
+        "🤖 Comparisons & Records",
+        "📈 AI Performance",
+        "💰 Savings Report",
+    ])
+
+    with tab1:
         show_dashboard(start, end)
 
-    elif wpm_page == "Waste Records":
+    with tab2:
         show_waste_records(start, end)
 
-    elif wpm_page == "AI Performance":
-        show_ai_performance(start, end)
+    with tab3:
+        show_ai_performance_comparison(start, end)
 
-    elif wpm_page == "Savings Report":
+    with tab4:
+        show_ai_performance_analytics(start, end)
+
+    with tab5:
         show_savings_report()

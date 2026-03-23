@@ -1,13 +1,11 @@
 """
-components/sidebar.py
+ui/sidebar.py
 Author : IT24103258
 """
 
 from __future__ import annotations
 from datetime import date, timedelta
 import streamlit as st
-
-PAGES = ["Dashboard", "Waste Records", "AI Performance", "Savings Report"]
 
 
 def render_sidebar() -> tuple[date, date]:
@@ -19,12 +17,6 @@ def render_sidebar() -> tuple[date, date]:
 """, unsafe_allow_html=True)
 
         st.markdown("### ♻️ Waste & Performance Monitor")
-        st.markdown("---")
-
-        for page in PAGES:
-            if st.button(page, key=f"wpm_nav_{page}", use_container_width=True):
-                st.session_state["wpm_page"] = page
-
         st.markdown("---")
         st.markdown("**Date Range**")
 
