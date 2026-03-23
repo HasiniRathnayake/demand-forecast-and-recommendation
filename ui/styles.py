@@ -8,7 +8,7 @@ def inject_styles() -> None:
         /* ── Google Font ───────────────────────────────────────────────────── */
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 
-        /* ── CSS Variables ─────────────────────────────────────────────────── */
+        /* ── CSS Variables – Light / Dark ──────────────────────────────────── */
         :root {
             --accent:       #2563EB;
             --accent-light: #3B82F6;
@@ -16,12 +16,16 @@ def inject_styles() -> None:
             --success:      #059669;
             --warning:      #D97706;
             --danger:       #DC2626;
+            --holiday-clr:  #EA580C;
+            --weekend-clr:  #0891B2;
+            --ai-clr:       #7C3AED;
             --radius:       12px;
             --radius-sm:    6px;
             --shadow:       0 2px 16px rgba(0,0,0,.08);
             --shadow-lg:    0 8px 32px rgba(0,0,0,.12);
         }
 
+        /* Light */
         [data-testid="stAppViewContainer"] {
             --bg:         #F8FAFC;
             --surface:    #FFFFFF;
@@ -29,6 +33,17 @@ def inject_styles() -> None:
             --text-main:  #0F172A;
             --text-muted: #64748B;
             --metric-bg:  #F1F5F9;
+        }
+        /* Dark  */
+        @media (prefers-color-scheme: dark) {
+            [data-testid="stAppViewContainer"] {
+                --bg:         #0F172A;
+                --surface:    #1E293B;
+                --border:     #334155;
+                --text-main:  #F1F5F9;
+                --text-muted: #94A3B8;
+                --metric-bg:  #1E293B;
+            }
         }
 
         /* ── Base ──────────────────────────────────────────────────────────── */
@@ -38,30 +53,13 @@ def inject_styles() -> None:
             color: var(--text-main);
         }
 
-        /* ── Hide auto sidebar nav ─────────────────────────────────────────── */
-        [data-testid="stSidebarNav"] { display: none !important; }
-
         /* ── Sidebar ───────────────────────────────────────────────────────── */
         [data-testid="stSidebar"] {
             background: var(--surface);
             border-right: 1px solid var(--border);
         }
-        [data-testid="stSidebar"] .stButton > button {
-            width: 100%;
-            text-align: left;
-            background: transparent;
-            border: none;
-            border-radius: 8px;
-            padding: 10px 14px;
-            color: #374151;
-            font-size: 0.875rem;
-            font-weight: 500;
-            transition: background 0.15s;
-        }
-        [data-testid="stSidebar"] .stButton > button:hover {
-            background: #eef2ff;
-            color: #2563eb;
-        }
+        /* Hide auto-discovered page navigation */
+        [data-testid="stSidebarNav"] { display: none !important; }
 
         /* ── Main header ───────────────────────────────────────────────────── */
         .main-header {
@@ -82,6 +80,9 @@ def inject_styles() -> None:
             font-weight: 600;
             color: var(--text-main);
             margin: 1.25rem 0 .5rem;
+            display: flex;
+            align-items: center;
+            gap: .4rem;
         }
 
         /* ── Metric cards ──────────────────────────────────────────────────── */
@@ -94,115 +95,93 @@ def inject_styles() -> None:
             transition: transform .15s ease, box-shadow .15s ease;
         }
         .metric-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
-
-        /* ── Streamlit metric override ─────────────────────────────────────── */
-        [data-testid="metric-container"] {
-            background: linear-gradient(135deg, #ffffff 0%, #f0f4ff 100%);
-            border: 1px solid #c7d7fd;
-            border-top: 3px solid #2563eb;
-            border-radius: 12px;
-            padding: 20px 24px !important;
-            box-shadow: 0 4px 12px rgba(37,99,235,0.08);
-            transition: box-shadow 0.2s;
-        }
-        [data-testid="metric-container"]:hover {
-            box-shadow: 0 6px 20px rgba(37,99,235,0.15);
-        }
-        [data-testid="metric-container"] > div:first-child {
-            color: #2563eb;
-            font-size: 0.72rem;
+        .metric-value {
+            font-size: 1.8rem;
             font-weight: 700;
+            color: var(--accent);
+            font-family: 'DM Mono', monospace;
+        }
+        .metric-label {
+            font-size: .75rem;
+            font-weight: 600;
+            color: var(--text-muted);
             text-transform: uppercase;
-            letter-spacing: 0.08em;
-            margin-bottom: 6px;
+            letter-spacing: .04em;
         }
-        [data-testid="metric-container"] [data-testid="stMetricValue"] {
-            font-size: 1.55rem;
-            font-weight: 800;
-            color: #111827;
-        }
-
-        /* ── Headings ──────────────────────────────────────────────────────── */
-        h1 {
-            font-size: 1.55rem;
-            font-weight: 700;
-            color: #111827;
-            margin-bottom: 0.15rem;
-        }
-        h2, h3 {
-            font-size: 1.3rem;
-            color: #1f2937;
-            font-weight: 600;
+        .metric-delta {
+            font-size: .8rem;
+            color: var(--success);
+            font-weight: 500;
+            margin-top: .2rem;
         }
 
-        /* ── Buttons ───────────────────────────────────────────────────────── */
-        .stButton > button {
-            border-radius: 8px;
+        /* ── Badges ────────────────────────────────────────────────────────── */
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: .25rem;
+            padding: 3px 10px;
+            border-radius: 999px;
+            font-size: .72rem;
             font-weight: 600;
-            font-size: 0.875rem;
-            transition: all 0.15s;
-            border: 1px solid #d1d5db;
-            color: #374151;
+            line-height: 1.6;
+            letter-spacing: .02em;
         }
-        .stButton > button:hover {
-            border-color: #2563eb;
-            color: #2563eb;
+        .badge-holiday  { background: #FEF3C7; color: #92400E; }
+        .badge-weekend  { background: #ECFDF5; color: #065F46; }
+        .badge-ai       { background: #EDE9FE; color: #5B21B6; }
+        .badge-model    { background: #DBEAFE; color: #1E40AF; }
+        .badge-weather  { background: #F0FDF4; color: #166534; }
+
+        @media (prefers-color-scheme: dark) {
+            .badge-holiday  { background: #78350F; color: #FDE68A; }
+            .badge-weekend  { background: #064E3B; color: #6EE7B7; }
+            .badge-ai       { background: #4C1D95; color: #DDD6FE; }
+            .badge-model    { background: #1E3A5F; color: #93C5FD; }
+            .badge-weather  { background: #14532D; color: #86EFAC; }
+        }
+
+        /* ── Weather widget ─────────────────────────────────────────────────── */
+        .weather-card {
+            background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+            color: #fff;
+            border-radius: var(--radius);
+            padding: 1rem 1.25rem;
+            margin-bottom: .75rem;
+        }
+        .weather-temp   { font-size: 2rem; font-weight: 700; font-family: 'DM Mono', monospace; }
+        .weather-label  { font-size: .75rem; opacity: .85; letter-spacing: .04em; text-transform: uppercase; }
+        .weather-detail { font-size: .85rem; opacity: .9; }
+
+        /* ── Product info grid ──────────────────────────────────────────────── */
+        .product-info-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: .3rem .75rem;
+            background: var(--metric-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: .75rem 1rem;
+            font-size: .85rem;
+        }
+        .info-label  { color: var(--text-muted); font-weight: 500; }
+        .info-value  { color: var(--text-main);  font-weight: 600; }
+
+        /* ── Alert / error banners ──────────────────────────────────────────── */
+        .alert-info    { background:#DBEAFE; color:#1E40AF; border-left:4px solid #2563EB; border-radius:var(--radius-sm); padding:.6rem 1rem; font-size:.85rem; }
+        .alert-warning { background:#FEF3C7; color:#92400E; border-left:4px solid #D97706; border-radius:var(--radius-sm); padding:.6rem 1rem; font-size:.85rem; }
+        .alert-success { background:#D1FAE5; color:#065F46; border-left:4px solid #059669; border-radius:var(--radius-sm); padding:.6rem 1rem; font-size:.85rem; }
+        @media (prefers-color-scheme: dark) {
+            .alert-info    { background:#1E3A5F; color:#93C5FD; }
+            .alert-warning { background:#78350F; color:#FDE68A; }
+            .alert-success { background:#064E3B; color:#6EE7B7; }
         }
 
         /* ── Tabs ───────────────────────────────────────────────────────────── */
-        [data-baseweb="tab-list"] { gap: 4px; }
-        [data-baseweb="tab"]      { border-radius: var(--radius-sm); font-weight: 500; }
-        [data-testid="stTabs"] [role="tab"] {
-            font-weight: 600;
-            font-size: 0.875rem;
-            color: #6b7280;
-        }
-        [data-testid="stTabs"] [aria-selected="true"] {
-            color: #2563eb;
-            border-bottom: 2px solid #2563eb;
-        }
+        [data-baseweb="tab-list"]    { gap: 4px; }
+        [data-baseweb="tab"]         { border-radius: var(--radius-sm); font-weight: 500; }
 
-        /* ── Tables ─────────────────────────────────────────────────────────── */
-        [data-testid="stDataFrame"] {
-            border: 1px solid #e5e7eb;
-            border-radius: 10px;
-            overflow: hidden;
-        }
-
-        /* ── Alerts ─────────────────────────────────────────────────────────── */
-        .stAlert { border-radius: 10px; font-size: 0.875rem; }
-        .alert-info    { background:#DBEAFE; color:#1E40AF; border-left:4px solid #2563EB; border-radius:6px; padding:.6rem 1rem; font-size:.85rem; }
-        .alert-warning { background:#FEF3C7; color:#92400E; border-left:4px solid #D97706; border-radius:6px; padding:.6rem 1rem; font-size:.85rem; }
-        .alert-success { background:#D1FAE5; color:#065F46; border-left:4px solid #059669; border-radius:6px; padding:.6rem 1rem; font-size:.85rem; }
-
-        /* ── Form inputs ─────────────────────────────────────────────────────── */
-        .stTextInput input,
-        .stNumberInput input,
-        .stSelectbox > div > div {
-            border-radius: 8px !important;
-            border-color: #d1d5db !important;
-            font-size: 0.875rem;
-        }
-
-        /* ── Expander ────────────────────────────────────────────────────────── */
-        [data-testid="stExpander"] {
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            overflow: hidden;
-            background: #ffffff;
-        }
-        [data-testid="stExpander"] summary {
-            font-weight: 600;
-            color: #374151;
-            font-size: 0.9rem;
-        }
-
-        
-
-        /* ── Divider ─────────────────────────────────────────────────────────── */
-        hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
-
-        /* ── Footer ──────────────────────────────────────────────────────────── */
+        /* ── Footer ─────────────────────────────────────────────────────────── */
         .footer {
             text-align: center;
             color: var(--text-muted);
@@ -211,8 +190,15 @@ def inject_styles() -> None:
             border-top: 1px solid var(--border);
             margin-top: 2rem;
         }
+
+        /* ── Divider ────────────────────────────────────────────────────────── */
+        hr { border: none; border-top: 1px solid var(--border); margin: 1rem 0; }
+
+        /* ── Streamlit overrides ─────────────────────────────────────────────── */
+        [data-testid="stMetric"]      { background: var(--metric-bg); border-radius: var(--radius); padding: .75rem 1rem; border: 1px solid var(--border); }
+        [data-testid="stExpander"]    { border: 1px solid var(--border); border-radius: var(--radius); }
+        div[data-testid="stDataFrame"] { border-radius: var(--radius); overflow: hidden; }
         </style>
         """,
         unsafe_allow_html=True,
     )
-

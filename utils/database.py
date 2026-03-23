@@ -21,12 +21,18 @@ def _parse_dt(val):
 
 def _get_client() -> Client:
     if "supabase" not in st.session_state:
-        st.error(
-            "Database connection not found. "
-            "Make sure your .env file exists with SUPABASE_URL and SUPABASE_KEY, "
-            "then restart the app."
-        )
-        st.stop()
+        try:
+            # Reuse the root app DB client when this module is embedded in the main app.
+            from data.db_client import get_client
+
+            st.session_state["supabase"] = get_client()
+        except Exception:
+            st.error(
+                "Database connection not found. "
+                "Make sure your .env file exists with SUPABASE_URL and SUPABASE_KEY, "
+                "then restart the app."
+            )
+            st.stop()
     return st.session_state["supabase"]
 
 
