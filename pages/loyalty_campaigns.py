@@ -106,7 +106,7 @@ def _load_eligible(selected_segs_tuple):
 
 
 def _build_preview(tmpl, campaign_name, custom_message,
-                   discount_pct, valid_until, sample_name, sample_seg):
+                   discount_pct, promo_start, valid_until, sample_name, sample_seg):
     """Build the HTML email preview string."""
     return f"""<!DOCTYPE html>
 <html>
@@ -141,7 +141,7 @@ def _build_preview(tmpl, campaign_name, custom_message,
         {discount_pct}% OFF
       </div>
       <div style="color:#888;font-size:11px;margin-top:5px;">
-        Valid until {valid_until.strftime('%d %b %Y')}
+                Valid from {promo_start.strftime('%d %b %Y')} to {valid_until.strftime('%d %b %Y')}
         &nbsp;·&nbsp; In-store &amp; online
       </div>
     </div>
@@ -226,13 +226,19 @@ def show_promotions():
                 min_value=date.today()
             )
         with col_d2:
-            valid_days = st.number_input(
-                "Valid (days)",
-                min_value=1, max_value=30,
-                value=7
+            promo_start = st.date_input(
+                "Promotion Starts",
+                value=send_date,
+                min_value=send_date,
             )
 
-        valid_until = send_date + timedelta(days=int(valid_days))
+        valid_days = st.number_input(
+            "Valid (days)",
+            min_value=1, max_value=30,
+            value=7
+        )
+
+        valid_until = promo_start + timedelta(days=int(valid_days))
 
         custom_message = st.text_area(
             "Email Message",
@@ -308,6 +314,7 @@ def show_promotions():
             campaign_name  = campaign_name,
             custom_message = custom_message,
             discount_pct   = discount_pct,
+            promo_start    = promo_start,
             valid_until    = valid_until,
             sample_name    = sample_name,
             sample_seg     = sample_seg,
@@ -320,6 +327,25 @@ def show_promotions():
         if 'eligible_rows' in dir() and eligible_rows:
             st.markdown("#### Step 4 — Send Campaign")
 
+            sender = EmailSender()
+            if st.button("⚙️ Process Due Scheduled Emails", use_container_width=True):
+                due_summary = sender.process_due_scheduled_emails()
+                if due_summary['total_due'] == 0:
+                    st.info("No scheduled emails are due yet.")
+                else:
+                    st.success(
+                        f"Processed {due_summary['total_due']} due emails: "
+                        f"{due_summary['sent']} sent, {due_summary['failed']} failed"
+                    )
+                    if due_summary['results']:
+                        st.dataframe(
+                            pd.DataFrame(due_summary['results']),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+
+            st.caption("Use this button to verify scheduled delivery without waiting for app restarts.")
+
             st.markdown(
                 f'<div style="background:#f8f9fa;border:1px solid #e0e0e0;'
                 f'border-radius:8px;padding:12px 16px;font-size:13px;'
@@ -327,7 +353,9 @@ def show_promotions():
                 f'📋 <strong>{campaign_name}</strong><br>'
                 f'🎯 <strong>{discount_pct}% OFF</strong><br>'
                 f'👥 <strong>{email_eligible}</strong> customers<br>'
-                f'📅 Valid until <strong>{valid_until.strftime("%d %b %Y")}</strong>'
+                f'📅 Send date <strong>{send_date.strftime("%d %b %Y")}</strong><br>'
+                f'🛍️ Promotion <strong>{promo_start.strftime("%d %b %Y")}</strong> '
+                f'to <strong>{valid_until.strftime("%d %b %Y")}</strong>'
                 f'</div>',
                 unsafe_allow_html=True
             )
@@ -377,6 +405,8 @@ def show_promotions():
             days_ahead = (send_date - date.today()).days
             if days_ahead > max_future_days:
                 validation_errors.append(f"❌ Send date cannot be more than {max_future_days} days in advance")
+            if promo_start < send_date:
+                validation_errors.append("❌ Promotion start date cannot be earlier than send date")
             
             # Valid days validation
             if valid_days < 1:
@@ -407,38 +437,53 @@ def show_promotions():
             )
 
             if st.button(btn_label, type="primary", use_container_width=True, disabled=not send_enabled):
+                customers_list = [{
+                    'customer_id':   r[0],
+                    'first_name':    r[1],
+                    'email':         r[2],
+                    'segment':       r[3],
+                    'email_enabled': r[4],
+                    'promo_allowed': r[5],
+                    'total_spent':   float(r[6]),
+                    'tx_count':      1,
+                    'avg_basket':    0,
+                    'days_inactive': 0
+                } for r in eligible_rows]
+
+                engine = OffersEngine()
+                offers = engine.generate_all_offers(customers_list)
+
+                for o in offers:
+                    o['discount_pct'] = discount_pct
+                    o['offer_text']   = f"{discount_pct}% OFF — {campaign_name}"
+                    o['promo_start']  = promo_start.strftime('%d %b %Y')
+                    o['promo_end']    = valid_until.strftime('%d %b %Y')
+
                 if scheduled:
+                    queue_summary = sender.queue_scheduled_emails(
+                        offers=offers,
+                        send_date=send_date,
+                        test_mode=test_mode,
+                    )
                     st.success(
                         f"✅ **{campaign_name}** scheduled for "
                         f"**{send_date.strftime('%d %b %Y')}** "
-                        f"— {email_eligible} customers"
+                        f"— queued: {queue_summary['queued']}, "
+                        f"skipped: {queue_summary['skipped']}, "
+                        f"failed: {queue_summary['failed']}"
                     )
+                    if queue_summary['results']:
+                        st.dataframe(
+                            pd.DataFrame(queue_summary['results']),
+                            use_container_width=True,
+                            hide_index=True,
+                        )
+                    st.cache_data.clear()
                 else:
                     progress = st.progress(0, text="Preparing...")
-
-                    customers_list = [{
-                        'customer_id':   r[0],
-                        'first_name':    r[1],
-                        'email':         r[2],
-                        'segment':       r[3],
-                        'email_enabled': r[4],
-                        'promo_allowed': r[5],
-                        'total_spent':   float(r[6]),
-                        'tx_count':      1,
-                        'avg_basket':    0,
-                        'days_inactive': 0
-                    } for r in eligible_rows]
-
                     progress.progress(30, text="Generating offers...")
-                    engine = OffersEngine()
-                    offers = engine.generate_all_offers(customers_list)
-
-                    for o in offers:
-                        o['discount_pct'] = discount_pct
-                        o['offer_text']   = f"{discount_pct}% OFF — {campaign_name}"
 
                     progress.progress(65, text="Sending emails...")
-                    sender  = EmailSender()
                     summary = sender.send_promotional_emails(
                         offers, test_mode=test_mode
                     )
@@ -451,7 +496,6 @@ def show_promotions():
 
                     if summary['sent'] > 0:
                         st.success(f"🎉 **{campaign_name}** sent!")
-                        st.balloons()
                         st.cache_data.clear()
                     elif summary['skipped'] == len(offers):
                         st.markdown(

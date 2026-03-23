@@ -126,6 +126,24 @@ elif page == "customer_dashboard":
 
     from pages.customer_dashboard import show_customer_dashboard
     show_customer_dashboard(user.get('customer_id'))
+
+elif page == "customer_settings":
+    from ui.styles import inject_styles
+    from services.auth_service import get_current_user
+    inject_styles()
+
+    user = get_current_user()
+    if not user or user.get('role') != 'customer':
+        st.session_state.current_page = "main_dashboard"
+        st.rerun()
+
+    if st.button("← Back to Dashboard", key="back_customer_settings"):
+        st.session_state.current_page = "customer_dashboard"
+        st.rerun()
+
+    from pages.customer_settings import show_customer_settings
+    show_customer_settings(user.get('customer_id'))
+
 # ── Route: loyalty module ─────────────────────────────────────────────────────
 elif page == "loyalty":
     from ui.styles import inject_styles
