@@ -2,8 +2,15 @@ import streamlit as st
 import requests
 import pandas as pd
 
-from ml.config import SUPABASE_URL, HEADERS, TABLE_REPLENISHMENT
+from config.settings import SUPABASE_URL, SUPABASE_KEY
 from ui.styles import inject_styles
+
+TABLE_REPLENISHMENT = "replenishment_orders"
+HEADERS = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+}
 
 # --- Supabase Fetchers ---
 def fetch_orders():
@@ -69,6 +76,10 @@ def delete_supplier(supplier_id):
 # --- UI Renderer ---
 def render_stock_replenishment():
     inject_styles()
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        st.error("Supabase is not configured. Set SUPABASE_URL and SUPABASE_KEY in your environment.")
+        return
+
     st.markdown("""
         <style>
         .badge { display: inline-block; padding: 0.25em 0.6em; font-size: 0.75rem; font-weight: 700; border-radius: 99px; text-align: center; }
