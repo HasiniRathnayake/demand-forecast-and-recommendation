@@ -8,8 +8,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
-from waste_monitor.utils.database import fetch_ai_performance, fetch_waste_records
-from waste_monitor.utils.helpers  import format_lkr
+from utils.database import fetch_ai_performance, fetch_waste_records
+from utils.helpers  import format_lkr
 
 
 def show_savings_report() -> None:
