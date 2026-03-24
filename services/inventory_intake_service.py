@@ -10,7 +10,7 @@ from __future__ import annotations
 class SmartIntakeSystem:
     def detect_anomaly(self, expected_qty: float, actual_qty: float) -> tuple[bool, str, str]:
         """
-        Compare AI expected quantity with physical count.
+        Compare ML system expected stock quantity with actual physical shelf count.
 
         Returns
         -------
@@ -19,25 +19,34 @@ class SmartIntakeSystem:
         expected = float(expected_qty or 0.0)
         actual = float(actual_qty or 0.0)
 
-        # No AI forecast available yet: allow logging without anomaly.
-        if expected <= 0:
-            return False, "No AI forecast found. Logging manual physical count.", "low"
+        # No system tracking yet: allow logging without anomaly.
+        if expected <= 0 and actual > 0:
+            return False, "Initial stock log recorded. No prior system stock found.", "low"
 
         if expected == actual:
-            return False, "Perfect match. Count aligns with AI forecast.", "none"
+            return False, "Verified: Zero Shrinkage. Physical shelf count matches ML systemic stock perfectly.", "none"
 
-        variance_pct = abs(expected - actual) / expected
+        variance = expected - actual
+        variance_pct = abs(variance) / max(expected, 1)
 
-        if actual < (expected * 0.5):
+        # Severe Shrinkage/Theft (Missing Stock)
+        if variance > 0 and variance_pct > 0.20:
             return (
                 True,
-                f"Massive shortage. AI predicted {expected:.2f}, but only {actual:.2f} counted.",
+                f"Severe Shrinkage! ML system tracked {expected:.0f} units, but only {actual:.0f} were found. ({variance:.0f} missing)",
                 "high",
             )
-        if variance_pct <= 0.10:
-            return False, f"Minor acceptable variance. Off by {abs(expected - actual):.2f} units.", "low"
-
-        return True, f"Significant variance of {variance_pct * 100:.1f}%. Manager review required.", "medium"
+            
+        # Overstock (Found more than expected)
+        if variance < 0 and variance_pct > 0.20:
+             return (
+                True,
+                f"Severe Overage! ML system tracked {expected:.0f} units, but {actual:.0f} were found. Incorrect receiving assumed.",
+                "medium",
+            )
+            
+        # Minor discrepancy
+        return False, f"Minor stock drift logged. Off by {abs(variance):.0f} units.", "low"
 
 
 def requires_remarks(is_anomaly: bool, remarks: str, min_len: int = 5) -> bool:
