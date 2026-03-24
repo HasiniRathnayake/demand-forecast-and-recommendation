@@ -586,6 +586,85 @@ def render_short_shipment():
             fig = px.pie(status_counts, values='Count', names='Status', hole=0.35)
             fig.update_layout(height=300)
             st.plotly_chart(fig, use_container_width=True)
+            # =========================================================
+            # SECTION 4: QUICK STATS (New)
+            # =========================================================
+            st.markdown("---")
+            st.markdown("### 📊 Quick Statistics")
+            
+            col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
+            
+            with col_stat1:
+                # Top Performing Supplier
+                top_supplier = df.groupby('supplier_name')['status'].apply(
+                    lambda x: (x == '✅ Accurate').mean() * 100
+                ).sort_values(ascending=False).head(1)
+                if not top_supplier.empty:
+                    st.metric("🏆 Top Supplier", top_supplier.index[0], 
+                             f"{top_supplier.values[0]:.0f}% accuracy")
+            
+            with col_stat2:
+                # Worst Performing Supplier
+                worst_supplier = df.groupby('supplier_name')['status'].apply(
+                    lambda x: (x == '⚠️ Short Shipped').mean() * 100
+                ).sort_values(ascending=False).head(1)
+                if not worst_supplier.empty:
+                    st.metric("⚠️ Needs Attention", worst_supplier.index[0], 
+                             f"{worst_supplier.values[0]:.0f}% short rate",
+                             delta_color="inverse")
+            
+            with col_stat3:
+                # Total Loss
+                total_loss = abs(df[df['financial_impact'] < 0]['financial_impact'].sum())
+                st.metric("💰 Total Loss", f"LKR {total_loss:,.2f}")
+            
+            with col_stat4:
+                # Total Credit from Over-deliveries
+                total_credit = df[df['financial_impact'] > 0]['financial_impact'].sum()
+                st.metric("📦 Total Credit", f"LKR {total_credit:,.2f}")
+            
+            # =========================================================
+            # SECTION 5: ALERTS (New)
+            # =========================================================
+            st.markdown("---")
+            st.markdown("### 🚨 Alerts")
+            
+            alerts = []
+            
+            # Check for critical issues
+            critical_loss = df[df['financial_impact'] < -10000]
+            if not critical_loss.empty:
+                for _, row in critical_loss.iterrows():
+                    alerts.append(f"🔴 CRITICAL: {row['supplier_name']} caused LKR {abs(row['financial_impact']):,.0f} loss on {row['product_name']}")
+            
+            # Check for repeat offenders
+            repeat_offenders = df[df['status'] == '⚠️ Short Shipped'].groupby('supplier_name').size()
+            repeat_offenders = repeat_offenders[repeat_offenders >= 3]
+            if not repeat_offenders.empty:
+                for supplier, count in repeat_offenders.items():
+                    alerts.append(f"⚠️ WARNING: {supplier} has {count} short shipments")
+            
+            # Check for improving trends (optional)
+            supplier_trend = df.groupby('supplier_name').apply(
+                lambda x: x['discrepancy_percentage'].mean() if len(x) >= 2 else 0
+            )
+            improving = supplier_trend[supplier_trend > 0].head(2)
+            if not improving.empty:
+                for supplier, trend in improving.items():
+                    alerts.append(f"📈 IMPROVING: {supplier} shows {trend:.1f}% improvement")
+            
+            if alerts:
+                for alert in alerts[:5]:  # Show top 5 alerts
+                    if "CRITICAL" in alert:
+                        st.error(alert)
+                    elif "WARNING" in alert:
+                        st.warning(alert)
+                    else:
+                        st.info(alert)
+                if len(alerts) > 5:
+                    st.caption(f"... and {len(alerts) - 5} more alerts")
+            else:
+                st.success("✅ No active alerts. All suppliers performing well!")
 
     # =========================================================
     # TAB 2: RECORD DELIVERY
@@ -758,7 +837,7 @@ def render_short_shipment():
                         d.received_quantity as Received,
                         d.discrepancy_quantity as Variance,
                         CASE 
-                            WHEN d.discrepancy_quantity < 0 THEN '⚠️ Short'
+                            WHEN d.discrepancy_quantity < 0 THEN '⚠️ Short '
                             WHEN d.discrepancy_quantity > 0 THEN '📦 Over'
                             ELSE '✅ OK'
                         END as Status
