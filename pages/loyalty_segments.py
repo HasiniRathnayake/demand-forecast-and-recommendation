@@ -30,6 +30,7 @@ def show_segments():
         st.subheader("Segment Overview")
     with col2:
         if st.button("🔄 Run Analysis", type="primary", use_container_width=True):
+<<<<<<< HEAD
             with st.spinner("Analysing customers..."):
                 seg     = CustomerSegmentation()
                 results = seg.run()
@@ -38,6 +39,49 @@ def show_segments():
                     st.rerun()
                 else:
                     st.error("No customers found.")
+=======
+            # ── VALIDATION BEFORE ANALYSIS ──────────────────────────
+            analysis_errors = []
+            
+            # Check if analysis already running (prevent duplicate runs)
+            if st.session_state.get("analysis_running", False):
+                st.warning("⏳ Analysis is already running. Please wait...")
+                st.stop()
+            
+            # Check if customer data exists
+            customer_count = db.fetch_one("SELECT COUNT(*) FROM customers WHERE is_active = TRUE")
+            if not customer_count or customer_count[0] == 0:
+                analysis_errors.append("❌ No active customers found in database")
+            
+            # Check minimum transactions exist
+            transaction_count = db.fetch_one("SELECT COUNT(*) FROM transactions")
+            if not transaction_count or transaction_count[0] < 10:
+                analysis_errors.append("❌ Insufficient transaction data (need at least 10 transactions)")
+            
+            # Display validation errors
+            if analysis_errors:
+                for error in analysis_errors:
+                    st.error(error)
+                st.stop()
+            
+            # Mark analysis as running
+            st.session_state.analysis_running = True
+            
+            with st.spinner("Analysing customers..."):
+                try:
+                    seg     = CustomerSegmentation()
+                    results = seg.run()
+                    if results:
+                        st.success(f"✅ Segmented {len(results)} customers!")
+                        st.session_state.analysis_running = False
+                        st.rerun()
+                    else:
+                        st.error("❌ Segmentation failed: No customers could be segmented.")
+                        st.session_state.analysis_running = False
+                except Exception as e:
+                    st.error(f"❌ Error during segmentation: {str(e)}")
+                    st.session_state.analysis_running = False
+>>>>>>> origin/main
 
     # ── Segment Chart + Table ─────────────────────────────
     seg_data = db.fetch_all("""

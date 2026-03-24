@@ -21,4 +21,8 @@ def get_client() -> Client:
             "Create a .env file with SUPABASE_URL and SUPABASE_KEY.\n"
             "See README.md for details."
         )
+<<<<<<< HEAD
     return create_client(SUPABASE_URL, SUPABASE_KEY)
+=======
+    return create_client(SUPABASE_URL, SUPABASE_KEY)
+>>>>>>> origin/main

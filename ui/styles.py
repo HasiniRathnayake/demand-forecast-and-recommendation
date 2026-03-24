@@ -58,6 +58,11 @@ def inject_styles() -> None:
             background: var(--surface);
             border-right: 1px solid var(--border);
         }
+<<<<<<< HEAD
+=======
+        /* Hide auto-discovered page navigation */
+        [data-testid="stSidebarNav"] { display: none !important; }
+>>>>>>> origin/main
 
         /* ── Main header ───────────────────────────────────────────────────── */
         .main-header {
