@@ -73,23 +73,46 @@ def save_override_log(order_id, code, predicted, ordered, reason):
     if resp.status_code not in [200, 201]:
         st.error(f"Failed to save override log. ({resp.status_code})")
 
-@st.dialog("⚠️ Anomaly Detected: Quantity Override")
-def override_confirmation_dialog(order_id, code, predicted, ordered, supplier_id):
-    st.warning("This order quantity is **significantly outside** the ML-expected range. Are you sure you want to continue?")
-    st.markdown(f"**Predicted:** {predicted} units — **Requested:** {ordered} units")
-    
-    reason = st.text_area("Reason for Override (Mandatory)", placeholder="Example: Expected seasonal demand spike...")
-    
-    rc1, rc2 = st.columns(2)
-    if rc1.button("Cancel", use_container_width=True):
-        st.rerun()
-    if rc2.button("Yes, I am sure", type="primary", use_container_width=True):
-        if not reason.strip():
-            st.error("Please provide a reason to continue.")
-        else:
-            save_override_log(order_id, code, predicted, ordered, reason)
-            update_order_status(order_id, 'APPROVED', supplier_id, final_qty=ordered)
+def _commit_override(order_id, code, predicted, ordered, supplier_id, reason):
+    save_override_log(order_id, code, predicted, ordered, reason)
+    update_order_status(order_id, 'APPROVED', supplier_id, final_qty=ordered)
+    st.session_state.pop("pending_override", None)
+    st.session_state.pop("override_reason_inline", None)
+    st.rerun()
+
+
+if hasattr(st, "dialog"):
+    @st.dialog("⚠️ Anomaly Detected: Quantity Override")
+    def _override_confirmation_dialog(order_id, code, predicted, ordered, supplier_id):
+        st.warning("This order quantity is **significantly outside** the ML-expected range. Are you sure you want to continue?")
+        st.markdown(f"**Predicted:** {predicted} units — **Requested:** {ordered} units")
+
+        reason = st.text_area("Reason for Override (Mandatory)", placeholder="Example: Expected seasonal demand spike...")
+
+        rc1, rc2 = st.columns(2)
+        if rc1.button("Cancel", use_container_width=True):
             st.rerun()
+        if rc2.button("Yes, I am sure", type="primary", use_container_width=True):
+            if not reason.strip():
+                st.error("Please provide a reason to continue.")
+            else:
+                _commit_override(order_id, code, predicted, ordered, supplier_id, reason)
+
+
+def override_confirmation_dialog(order_id, code, predicted, ordered, supplier_id):
+    # Streamlit < 1.34 does not support st.dialog; fallback to inline confirm panel.
+    if hasattr(st, "dialog"):
+        _override_confirmation_dialog(order_id, code, predicted, ordered, supplier_id)
+        return
+
+    st.session_state["pending_override"] = {
+        "order_id": order_id,
+        "code": code,
+        "predicted": predicted,
+        "ordered": ordered,
+        "supplier_id": supplier_id,
+    }
+    st.rerun()
 
 def update_po_status(po_id, status):
     url = f"{SUPABASE_URL}/rest/v1/purchase_orders?po_id=eq.{po_id}"
@@ -153,6 +176,37 @@ def render_stock_replenishment():
         pos = fetch_purchase_orders()
         default_supplier_id = suppliers[0]['supplier_id'] if suppliers else None
 
+    # Inline fallback panel for older Streamlit versions without st.dialog.
+    pending_override = st.session_state.get("pending_override")
+    if pending_override and not hasattr(st, "dialog"):
+        st.warning("⚠️ Anomaly Detected: Quantity Override")
+        st.markdown(
+            f"**Predicted:** {pending_override['predicted']} units — "
+            f"**Requested:** {pending_override['ordered']} units"
+        )
+        reason = st.text_area(
+            "Reason for Override (Mandatory)",
+            placeholder="Example: Expected seasonal demand spike...",
+            key="override_reason_inline",
+        )
+        rc1, rc2 = st.columns(2)
+        if rc1.button("Cancel Override", use_container_width=True):
+            st.session_state.pop("pending_override", None)
+            st.session_state.pop("override_reason_inline", None)
+            st.rerun()
+        if rc2.button("Confirm Override", type="primary", use_container_width=True):
+            if not reason.strip():
+                st.error("Please provide a reason to continue.")
+            else:
+                _commit_override(
+                    pending_override["order_id"],
+                    pending_override["code"],
+                    pending_override["predicted"],
+                    pending_override["ordered"],
+                    pending_override["supplier_id"],
+                    reason,
+                )
+
     import hashlib
     def get_fallback_name(sku):
         items = ["Organic Greek Yogurt", "Fresh Almond Milk", "Premium Whole Wheat Bread", "Cheddar Cheese Block", 
@@ -167,7 +221,12 @@ def render_stock_replenishment():
         return items[idx]
 
     # Main Tabs
-    tab_dash, tab_po, tab_sup = st.tabs(["📊 ML Dashboard & Approvals", "📦 Purchase Orders (Auto-POs)", "🏢 Supplier Directory"])
+    tab_dash, tab_po, tab_sup, tab_shrink = st.tabs([
+        "📊 ML Dashboard & Approvals",
+        "📦 Purchase Orders (Auto-POs)",
+        "🏢 Supplier Directory",
+        "📉 Shrinkage Analysis",
+    ])
 
     # ─────────────────────────────────────────────────────────────────
     # TAB 1: ML Replenishment Dashboard
@@ -348,3 +407,17 @@ def render_stock_replenishment():
                         delete_supplier(sid)
         else:
             st.info("No suppliers exist in the database.")
+
+    # ─────────────────────────────────────────────────────────────────
+    # TAB 4: Shrinkage Analysis (Inventory Intake Dashboard)
+    # ─────────────────────────────────────────────────────────────────
+    with tab_shrink:
+        st.markdown("#### 📉 Shrinkage Analysis")
+        st.caption("Inventory intake analytics view only (workflow form hidden).")
+
+        try:
+            from pages.inventory_intake_page import render_shrinkage_analytics_only
+
+            render_shrinkage_analytics_only()
+        except Exception as exc:
+            st.error(f"Unable to load Inventory Intake dashboard: {exc}")
