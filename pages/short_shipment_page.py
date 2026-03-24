@@ -856,6 +856,76 @@ def render_short_shipment():
                     except Exception as e:
                         st.error(f"Error saving delivery: {e}")
                             # =========================================================
+    # FUNCTION: Calculate compensation for next order (UPDATED)
+    # =========================================================
+    def calculate_next_order_adjustment(supplier_data):
+        """Calculate how to adjust next order to compensate - INCLUDES ALL SUPPLIERS"""
+        
+        if supplier_data.empty:
+            return None
+
+        # Group by supplier AND product to calculate cumulative shortages
+        product_summary = supplier_data.groupby(['supplier', 'product_code', 'product']).agg({
+            'ordered': 'sum',
+            'received': 'sum',
+            'discrepancy_qty': 'sum',
+            'financial_impact': 'sum',
+            'unit_price': 'first'
+        }).reset_index()
+
+        adjustments = []
+        
+        for _, row in product_summary.iterrows():
+            cumulative_shortage = abs(row['discrepancy_qty']) if row['discrepancy_qty'] < 0 else 0
+            cumulative_overage = row['discrepancy_qty'] if row['discrepancy_qty'] > 0 else 0
+
+            if cumulative_shortage > 0:
+                adjustment = {
+                    'supplier': row['supplier'],
+                    'product': row['product'],
+                    'product_code': row['product_code'],
+                    'cumulative_shortage': cumulative_shortage,
+                    'cumulative_overage': cumulative_overage,
+                    'net_position': -cumulative_shortage + cumulative_overage,
+                    'adjustment_type': '📦 ADD TO NEXT ORDER',
+                    'adjustment_qty': cumulative_shortage,
+                    'financial_impact': row['financial_impact'],
+                    'reason': f"Short by {cumulative_shortage:,.0f} units",
+                    'action': f"Add {cumulative_shortage:,.0f} extra units to next order"
+                }
+            elif cumulative_overage > 0:
+                adjustment = {
+                    'supplier': row['supplier'],
+                    'product': row['product'],
+                    'product_code': row['product_code'],
+                    'cumulative_shortage': 0,
+                    'cumulative_overage': cumulative_overage,
+                    'net_position': cumulative_overage,
+                    'adjustment_type': '💰 CREDIT FOR NEXT ORDER',
+                    'adjustment_qty': cumulative_overage,
+                    'financial_impact': row['financial_impact'],
+                    'reason': f"Over by {cumulative_overage:,.0f} units",
+                    'action': f"Credit {cumulative_overage:,.0f} units for next order"
+                }
+            else:
+                adjustment = {
+                    'supplier': row['supplier'],
+                    'product': row['product'],
+                    'product_code': row['product_code'],
+                    'cumulative_shortage': 0,
+                    'cumulative_overage': 0,
+                    'net_position': 0,
+                    'adjustment_type': '✅ NO ADJUSTMENT',
+                    'adjustment_qty': 0,
+                    'financial_impact': 0,
+                    'reason': "All deliveries accurate",
+                    'action': "No adjustment needed"
+                }
+            
+            adjustments.append(adjustment)
+        
+        return pd.DataFrame(adjustments)
+    # =========================================================
     # TAB 2: RECORD DELIVERY (continued)
     # =========================================================
     with tab2:
@@ -1187,65 +1257,5 @@ def render_short_shipment():
                         fig.update_layout(height=400)
                         st.plotly_chart(fig, use_container_width=True)
                     
-                    # =========================================================
-                    # SUMMARY BY SUPPLIER
-                    # =========================================================
-                    st.markdown("---")
-                    st.markdown("## 🏭 Summary by Supplier")
                     
-                    supplier_summary = adjustments_df.groupby('supplier').agg({
-                        'cumulative_shortage': 'sum',
-                        'cumulative_overage': 'sum',
-                        'adjustment_qty': 'sum'
-                    }).reset_index()
                     
-                    supplier_summary['net'] = supplier_summary['cumulative_shortage'] - supplier_summary['cumulative_overage']
-                    supplier_summary = supplier_summary.sort_values('net', ascending=False)
-                    
-                    for _, row in supplier_summary.iterrows():
-                        col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
-                        with col1:
-                            st.write(f"**{row['supplier']}**")
-                        with col2:
-                            if row['cumulative_shortage'] > 0:
-                                st.write(f"📦 Short: {row['cumulative_shortage']:,.0f} units")
-                        with col3:
-                            if row['cumulative_overage'] > 0:
-                                st.write(f"💰 Credit: {row['cumulative_overage']:,.0f} units")
-                        with col4:
-                            if row['net'] > 0:
-                                st.warning(f"+{row['net']:,.0f} to add")
-                            elif row['net'] < 0:
-                                st.success(f"{row['net']:+,.0f} credit")
-                            else:
-                                st.success("✅ Balanced")
-                    
-                    # =========================================================
-                    # ACTION BUTTONS
-                    # =========================================================
-                    st.markdown("---")
-                    st.markdown("## 📤 Actions")
-                    
-                    total_shortage = adjustments_df['cumulative_shortage'].sum()
-                    total_credit = adjustments_df['cumulative_overage'].sum()
-                    
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        if st.button("📥 Export Adjustments to Excel", use_container_width=True, key="rec_export"):
-                            with pd.ExcelWriter('next_order_adjustments.xlsx') as writer:
-                                display_adjustments.to_excel(writer, sheet_name='Adjustments', index=False)
-                            st.success("✅ Adjustments saved as 'next_order_adjustments.xlsx'")
-                    
-                    with col2:
-                        if st.button("📋 Generate Purchase Order", use_container_width=True, key="rec_po"):
-                            if total_shortage > 0:
-                                st.success(f"✅ Purchase order generated with +{total_shortage:,.0f} extra units")
-                                if total_credit > 0:
-                                    st.info(f"💰 Credit of {total_credit:,.0f} units applied")
-                            else:
-                                st.success("✅ Purchase order generated with no adjustments")
-                    
-                    with col3:
-                        if st.button("📧 Email Recommendations", use_container_width=True, key="rec_email"):
-                            st.info("📧 Recommendations ready to email to procurement team")
