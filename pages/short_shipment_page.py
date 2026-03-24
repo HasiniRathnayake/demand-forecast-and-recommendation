@@ -984,3 +984,204 @@ def render_short_shipment():
             adjustments.append(adjustment)
 
         return pd.DataFrame(adjustments)
+    
+        # =========================================================
+    # TAB 3: ORDER RECONCILIATION (Clean - Only Adjustments)
+    # =========================================================
+    with tab3:
+        st.markdown('<div class="section-title">📦 Next Order Adjustments</div>', unsafe_allow_html=True)
+        st.markdown("Automatically calculate what to add or credit in your next purchase order")
+        
+        # =========================================================
+        # Date Range Selector
+        # =========================================================
+        col1, col2 = st.columns(2)
+        with col1:
+            rec_start_date = st.date_input("📅 From Date", value=date.today() - timedelta(days=90), key="rec_start")
+        with col2:
+            rec_end_date = st.date_input("📅 To Date", value=date.today(), key="rec_end")
+        
+        # Load data
+        rec_df = get_delivery_data_for_reconciliation(rec_start_date, rec_end_date)
+        
+        if rec_df.empty:
+            st.warning("⚠️ No delivery data found for the selected period.")
+            st.info("📝 Please record deliveries first in the 'Record Delivery' tab.")
+        else:
+            # =========================================================
+            # Show Filter Only (No Supplier Dropdown - Removed)
+            # =========================================================
+            show_only = st.selectbox(
+                "🔍 Show",
+                ["All Adjustments", "Only Shortages", "Only Credits", "No Adjustment Needed"],
+                key="rec_show"
+            )
+            
+            # Calculate adjustments for ALL suppliers (no filter)
+            adjustments_df = calculate_next_order_adjustment(rec_df)
+            
+            if adjustments_df is None or adjustments_df.empty:
+                st.info("No adjustments needed")
+            else:
+                # Apply show filter
+                if show_only == "Only Shortages":
+                    adjustments_df = adjustments_df[adjustments_df['cumulative_shortage'] > 0]
+                elif show_only == "Only Credits":
+                    adjustments_df = adjustments_df[adjustments_df['cumulative_overage'] > 0]
+                elif show_only == "No Adjustment Needed":
+                    adjustments_df = adjustments_df[adjustments_df['adjustment_qty'] == 0]
+                
+                if adjustments_df.empty:
+                    st.info(f"No {show_only.lower()} found")
+                else:
+                    # =========================================================
+                    # ADJUSTMENTS TABLE
+                    # =========================================================
+                    st.markdown("## 📋 Recommended Adjustments for Next Order")
+                    
+                    # Prepare display table
+                    display_adjustments = adjustments_df[[
+                        'supplier', 'product', 'cumulative_shortage', 'cumulative_overage', 
+                        'net_position', 'adjustment_type', 'action', 'reason'
+                    ]].copy()
+                    
+                    display_adjustments.columns = [
+                        'Supplier', 'Product', 'Shortage (units)', 'Credit (units)', 
+                        'Net Position', 'Type', 'Action', 'Reason'
+                    ]
+                    
+                    # Color code rows
+                    def color_adjustment_rows(row):
+                        if 'Add to Next Order' in row['Type']:
+                            return ['background-color: #ffcccc'] * len(row)
+                        elif 'Credit' in row['Type']:
+                            return ['background-color: #ccffcc'] * len(row)
+                        return [''] * len(row)
+                    
+                    st.dataframe(
+                        display_adjustments.style.apply(color_adjustment_rows, axis=1),
+                        use_container_width=True,
+                        height=400
+                    )
+                    
+                    # =========================================================
+                    # VISUAL SUMMARY (Charts Only)
+                    # =========================================================
+                    st.markdown("---")
+                    st.markdown("## 📊 Adjustment Summary")
+                    
+                    col_chart1, col_chart2 = st.columns(2)
+                    
+                    with col_chart1:
+                        # Bar chart - Top adjustments by product
+                        chart_data = adjustments_df[adjustments_df['adjustment_qty'] > 0].copy()
+                        if not chart_data.empty:
+                            chart_data = chart_data.sort_values('adjustment_qty', ascending=True).tail(10)
+                            fig = px.bar(
+                                chart_data,
+                                x='adjustment_qty',
+                                y='product',
+                                orientation='h',
+                                color='adjustment_type',
+                                title='Top Products Needing Adjustment',
+                                labels={'adjustment_qty': 'Units to Adjust', 'product': 'Product'},
+                                color_discrete_map={
+                                    'Add to Next Order': '#e74c3c',
+                                    'Credit for Next Order': '#2ecc71'
+                                }
+                            )
+                            fig.update_layout(height=400)
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("No products need adjustment")
+                    
+                    with col_chart2:
+                        # Donut chart - Adjustment distribution
+                        type_counts = adjustments_df['adjustment_type'].value_counts().reset_index()
+                        type_counts.columns = ['Type', 'Count']
+                        
+                        fig = px.pie(
+                            type_counts,
+                            values='Count',
+                            names='Type',
+                            title='Adjustment Distribution',
+                            hole=0.4,
+                            color='Type',
+                            color_discrete_map={
+                                'Add to Next Order': '#e74c3c',
+                                'Credit for Next Order': '#2ecc71',
+                                'No Adjustment': '#95a5a6'
+                            }
+                        )
+                        fig.update_layout(height=400)
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    # =========================================================
+                    # SUMMARY BY SUPPLIER
+                    # =========================================================
+                    st.markdown("---")
+                    st.markdown("## 🏭 Summary by Supplier")
+                    
+                    supplier_summary = adjustments_df.groupby('supplier').agg({
+                        'cumulative_shortage': 'sum',
+                        'cumulative_overage': 'sum',
+                        'adjustment_qty': 'sum'
+                    }).reset_index()
+                    
+                    supplier_summary['net'] = supplier_summary['cumulative_shortage'] - supplier_summary['cumulative_overage']
+                    supplier_summary = supplier_summary.sort_values('net', ascending=False)
+                    
+                    for _, row in supplier_summary.iterrows():
+                        col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+                        with col1:
+                            st.write(f"**{row['supplier']}**")
+                        with col2:
+                            if row['cumulative_shortage'] > 0:
+                                st.write(f"📦 Short: {row['cumulative_shortage']:,.0f} units")
+                        with col3:
+                            if row['cumulative_overage'] > 0:
+                                st.write(f"💰 Credit: {row['cumulative_overage']:,.0f} units")
+                        with col4:
+                            if row['net'] > 0:
+                                st.warning(f"+{row['net']:,.0f} to add")
+                            elif row['net'] < 0:
+                                st.success(f"{row['net']:+,.0f} credit")
+                            else:
+                                st.success("✅ Balanced")
+                    
+                    # =========================================================
+                    # ACTION BUTTONS
+                    # =========================================================
+                    st.markdown("---")
+                    st.markdown("## 📤 Actions")
+                    
+                    total_shortage = adjustments_df['cumulative_shortage'].sum()
+                    total_credit = adjustments_df['cumulative_overage'].sum()
+                    
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
+                        if st.button("📥 Export Adjustments to Excel", use_container_width=True, key="rec_export"):
+                            with pd.ExcelWriter('next_order_adjustments.xlsx') as writer:
+                                display_adjustments.to_excel(writer, sheet_name='Adjustments', index=False)
+                            st.success("✅ Adjustments saved as 'next_order_adjustments.xlsx'")
+                    
+                    with col2:
+                        if st.button("📋 Generate Purchase Order", use_container_width=True, key="rec_po"):
+                            if total_shortage > 0:
+                                st.success(f"✅ Purchase order generated with +{total_shortage:,.0f} extra units")
+                                if total_credit > 0:
+                                    st.info(f"💰 Credit of {total_credit:,.0f} units applied")
+                            else:
+                                st.success("✅ Purchase order generated with no adjustments")
+                    
+                    with col3:
+                        if st.button("📧 Email Recommendations", use_container_width=True, key="rec_email"):
+                            st.info("📧 Recommendations ready to email to procurement team")
+                    
+                    # =========================================================
+                    # HOW IT WORKS (Collapsible)
+                    # =========================================================
+                    with st.expander("ℹ️ How Next Order Adjustments Are Calculated"):
+                        st.markdown("--")
+                        
