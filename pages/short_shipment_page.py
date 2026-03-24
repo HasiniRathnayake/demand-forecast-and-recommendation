@@ -247,6 +247,34 @@ def render_short_shipment():
             return pd.DataFrame()
 
     # =========================================================
+    # Function to get pending purchase orders
+    # =========================================================
+    def get_pending_purchase_orders():
+        """Fetch purchase orders waiting to be delivered (from Replenishment system)"""
+        try:
+            if conn_type == "supabase":
+                response = conn.table("purchase_orders")\
+                    .select("po_id, status, replenishment_orders(product_code, suggested_qty), suppliers(supplier_name)")\
+                    .eq("status", "SENT").execute()
+                
+                data = []
+                for po in response.data:
+                    rep = po.get('replenishment_orders') or {}
+                    sup = po.get('suppliers') or {}
+                    data.append({
+                        "po_id": po.get('po_id'),
+                        "supplier_name": sup.get('supplier_name', 'Unknown'),
+                        "product_code": rep.get('product_code', 'Unknown'),
+                        "ordered_qty": rep.get('suggested_qty', 0)
+                    })
+                return pd.DataFrame(data)
+            else:
+                return pd.DataFrame()
+        except Exception as e:
+            st.error(f"Error fetching pending POs: {e}")
+            return pd.DataFrame()
+
+    # =========================================================
     # Function to ensure sample data exists
     # =========================================================
     def ensure_sample_data():
@@ -606,17 +634,48 @@ def render_short_shipment():
         else:
             st.success(f"✅ Found {len(suppliers_df)} suppliers and {len(products_df)} products")
 
+            # --- START INTEGRATION ---
+            pending_pos_df = get_pending_purchase_orders()
+            pending_options = ["— Manual Entry —"]
+            if not pending_pos_df.empty:
+                for _, po in pending_pos_df.iterrows():
+                    pending_options.append(f"PO: {str(po['po_id'])[:8].upper()} - {po['supplier_name']}")
+
+            st.markdown("##### 🔗 Connect to Auto-PO")
+            selected_po_label = st.selectbox("Select Pending Purchase Order", options=pending_options)
+            
+            is_auto = selected_po_label != "— Manual Entry —"
+            auto_po = None
+            if is_auto:
+                idx = pending_options.index(selected_po_label) - 1
+                auto_po = pending_pos_df.iloc[idx]
+            st.markdown("---")
+            # --- END INTEGRATION ---
+
             col_f1, col_f2 = st.columns(2)
             with col_f1:
-                order_num = st.text_input("Order/Invoice Number *")
+                default_order_num = str(auto_po['po_id']) if is_auto else ""
+                order_num = st.text_input("Order/Invoice Number *", value=default_order_num, disabled=is_auto)
+                
                 supplier_names = suppliers_df['supplier_name'].tolist()
-                supplier = st.selectbox("Supplier *", supplier_names)
+                default_sup_idx = supplier_names.index(auto_po['supplier_name']) if is_auto and auto_po['supplier_name'] in supplier_names else 0
+                supplier = st.selectbox("Supplier *", supplier_names, index=default_sup_idx, disabled=is_auto)
                 del_date = st.date_input("Delivery Date", value=date.today())
             with col_f2:
                 product_names = products_df['product_name'].tolist()
-                product = st.selectbox("Product *", product_names)
-                ordered_qty = st.number_input("Ordered Quantity", min_value=0, value=100, step=10)
-                received_qty = st.number_input("Received Quantity", min_value=0, value=100, step=10)
+                
+                default_prod_idx = 0
+                if is_auto:
+                    code_match = products_df[products_df['product_code'] == auto_po['product_code']]
+                    if not code_match.empty:
+                        prod_name = code_match.iloc[0]['product_name']
+                        if prod_name in product_names:
+                            default_prod_idx = product_names.index(prod_name)
+                
+                product = st.selectbox("Product *", product_names, index=default_prod_idx, disabled=is_auto)
+                default_qty = int(auto_po['ordered_qty']) if is_auto else 100
+                ordered_qty = st.number_input("Ordered Quantity", min_value=0, value=default_qty, disabled=is_auto)
+                received_qty = st.number_input("Received Quantity", min_value=0, value=default_qty if is_auto else 100, step=10)
 
             disc_qty = received_qty - ordered_qty
             disc_pct = (disc_qty / ordered_qty * 100) if ordered_qty > 0 else 0
@@ -658,6 +717,12 @@ def render_short_shipment():
                                     "billed_quantity": ordered_qty,
                                     "received_quantity": received_qty
                                 }).execute()
+                                
+                                # --- START PO HANDSHAKE ---
+                                if is_auto:
+                                    conn.table("purchase_orders").update({"status": "DELIVERED"}).eq("po_id", auto_po['po_id']).execute()
+                                # --- END PO HANDSHAKE ---
+                                
                             st.success("✅ Delivery recorded successfully!")
                             st.balloons()
                             st.rerun()
