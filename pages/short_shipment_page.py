@@ -579,13 +579,7 @@ def render_short_shipment():
                 st.metric("Financial Impact", f"LKR {abs(total_impact):,.2f}")
 
             st.markdown("---")
-            # Chart
-            st.markdown("**Delivery Status**")
-            status_counts = df['status'].value_counts().reset_index()
-            status_counts.columns = ['Status', 'Count']
-            fig = px.pie(status_counts, values='Count', names='Status', hole=0.35)
-            fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
+           
             # =========================================================
             # SECTION 4: QUICK STATS (New)
             # =========================================================
@@ -985,7 +979,8 @@ def render_short_shipment():
 
         return pd.DataFrame(adjustments)
     
-        # =========================================================
+     
+    # =========================================================
     # TAB 3: ORDER RECONCILIATION (Clean - Only Adjustments)
     # =========================================================
     with tab3:
@@ -993,21 +988,60 @@ def render_short_shipment():
         st.markdown("Automatically calculate what to add or credit in your next purchase order")
         
         # =========================================================
-        # Date Range Selector
+        # Date Range Selector with Validation
         # =========================================================
         col1, col2 = st.columns(2)
-        with col1:
-            rec_start_date = st.date_input("📅 From Date", value=date.today() - timedelta(days=90), key="rec_start")
-        with col2:
-            rec_end_date = st.date_input("📅 To Date", value=date.today(), key="rec_end")
         
-        # Load data
+        today_date = date.today()
+        
+        with col1:
+            rec_start_date = st.date_input(
+                "📅 From Date", 
+                value=today_date - timedelta(days=90), 
+                key="rec_start",
+                max_value=today_date  # Prevents future dates
+            )
+        
+        with col2:
+            rec_end_date = st.date_input(
+                "📅 To Date", 
+                value=today_date, 
+                key="rec_end",
+                max_value=today_date  # Prevents future dates
+            )
+        
+        # Date Validation
+        date_error = None
+        if rec_start_date > rec_end_date:
+            date_error = "❌ Start date cannot be after end date"
+        elif rec_end_date > today_date:
+            date_error = "❌ End date cannot be in the future"
+        elif rec_start_date > today_date:
+            date_error = "❌ Start date cannot be in the future"
+        
+        if date_error:
+            st.error(date_error)
+            st.stop()  # Stop execution if date validation fails
+        
+        # =========================================================
+        # Load data with validated dates
+        # =========================================================
         rec_df = get_delivery_data_for_reconciliation(rec_start_date, rec_end_date)
         
         if rec_df.empty:
             st.warning("⚠️ No delivery data found for the selected period.")
             st.info("📝 Please record deliveries first in the 'Record Delivery' tab.")
         else:
+            # =========================================================
+            # Show Filter Only
+            # =========================================================
+            show_only = st.selectbox(
+                "🔍 Show",
+                ["All Adjustments", "Only Shortages", "Only Credits", "No Adjustment Needed"],
+                key="rec_show"
+            )
+            
+            # Calcula
             # =========================================================
             # Show Filter Only (No Supplier Dropdown - Removed)
             # =========================================================
@@ -1116,39 +1150,7 @@ def render_short_shipment():
                         fig.update_layout(height=400)
                         st.plotly_chart(fig, use_container_width=True)
                     
-                    # =========================================================
-                    # SUMMARY BY SUPPLIER
-                    # =========================================================
-                    st.markdown("---")
-                    st.markdown("## 🏭 Summary by Supplier")
-                    
-                    supplier_summary = adjustments_df.groupby('supplier').agg({
-                        'cumulative_shortage': 'sum',
-                        'cumulative_overage': 'sum',
-                        'adjustment_qty': 'sum'
-                    }).reset_index()
-                    
-                    supplier_summary['net'] = supplier_summary['cumulative_shortage'] - supplier_summary['cumulative_overage']
-                    supplier_summary = supplier_summary.sort_values('net', ascending=False)
-                    
-                    for _, row in supplier_summary.iterrows():
-                        col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
-                        with col1:
-                            st.write(f"**{row['supplier']}**")
-                        with col2:
-                            if row['cumulative_shortage'] > 0:
-                                st.write(f"📦 Short: {row['cumulative_shortage']:,.0f} units")
-                        with col3:
-                            if row['cumulative_overage'] > 0:
-                                st.write(f"💰 Credit: {row['cumulative_overage']:,.0f} units")
-                        with col4:
-                            if row['net'] > 0:
-                                st.warning(f"+{row['net']:,.0f} to add")
-                            elif row['net'] < 0:
-                                st.success(f"{row['net']:+,.0f} credit")
-                            else:
-                                st.success("✅ Balanced")
-                    
+                   
                     # =========================================================
                     # ACTION BUTTONS
                     # =========================================================
@@ -1179,9 +1181,4 @@ def render_short_shipment():
                         if st.button("📧 Email Recommendations", use_container_width=True, key="rec_email"):
                             st.info("📧 Recommendations ready to email to procurement team")
                     
-                    # =========================================================
-                    # HOW IT WORKS (Collapsible)
-                    # =========================================================
-                    with st.expander("ℹ️ How Next Order Adjustments Are Calculated"):
-                        st.markdown("--")
-                        
+                    
