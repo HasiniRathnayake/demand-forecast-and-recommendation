@@ -673,28 +673,45 @@ def render_short_shipment():
             else:
                 st.dataframe(filtered_df.head(show_limit), use_container_width=True)
             
-            # =========================================================
-            # SECTION 5: ALERTS (New)
+                        # =========================================================
+            # SECTION 5: ALERTS (Enhanced with Tooltips)
             # =========================================================
             st.markdown("---")
             st.markdown("### 🚨 Alerts")
+            st.caption("ℹ️ **Hover over any alert** to see why it was triggered")
             
             alerts = []
+            alert_explanations = []
             
-            # Check for critical issues
+            # Check for critical issues (loss > LKR 10,000)
             critical_loss = df[df['financial_impact'] < -10000]
             if not critical_loss.empty:
                 for _, row in critical_loss.iterrows():
-                    alerts.append(f"🔴 CRITICAL: {row['supplier_name']} caused LKR {abs(row['financial_impact']):,.0f} loss on {row['product_name']}")
+                    loss_amount = abs(row['financial_impact'])
+                    alerts.append(f"🔴 CRITICAL: {row['supplier_name']} caused LKR {loss_amount:,.0f} loss on {row['product_name']}")
+                    alert_explanations.append(f"""
+                    **Why this alert?**
+                    - Loss amount: LKR {loss_amount:,.0f}
+                    - Threshold: > LKR 10,000
+                    - Impact: This supplier has caused significant financial loss
+                    - Recommended action: Immediate investigation required
+                    """)
             
-            # Check for repeat offenders
+            # Check for repeat offenders (3+ short shipments)
             repeat_offenders = df[df['status'] == '⚠️ Short Shipped'].groupby('supplier_name').size()
             repeat_offenders = repeat_offenders[repeat_offenders >= 3]
             if not repeat_offenders.empty:
                 for supplier, count in repeat_offenders.items():
                     alerts.append(f"⚠️ WARNING: {supplier} has {count} short shipments")
+                    alert_explanations.append(f"""
+                    **Why this alert?**
+                    - Short shipments: {count}
+                    - Threshold: 3 or more short shipments
+                    - Pattern: This supplier consistently delivers less than ordered
+                    - Recommended action: Schedule performance review meeting
+                    """)
             
-            # Check for improving trends (optional)
+            # Check for improving trends
             supplier_trend = df.groupby('supplier_name').apply(
                 lambda x: x['discrepancy_percentage'].mean() if len(x) >= 2 else 0
             )
@@ -702,20 +719,50 @@ def render_short_shipment():
             if not improving.empty:
                 for supplier, trend in improving.items():
                     alerts.append(f"📈 IMPROVING: {supplier} shows {trend:.1f}% improvement")
+                    alert_explanations.append(f"""
+                    **Why this alert?**
+                    - Improvement rate: {trend:.1f}%
+                    - Positive trend: Discrepancy percentage is decreasing
+                    - Impact: Supplier is getting better at accurate deliveries
+                    - Recommended action: Acknowledge and encourage continued improvement
+                    """)
             
+            # Check for delivery accuracy drops (new)
+            accuracy_drop = df.groupby('supplier_name').apply(
+                lambda x: x['discrepancy_percentage'].mean() - x['discrepancy_percentage'].mean() if len(x) >= 2 else 0
+            )
+            # Check for products with high discrepancy rate
+            product_issues = df[abs(df['discrepancy_percentage']) > 15].groupby('product_name').size()
+            product_issues = product_issues[product_issues >= 2]
+            if not product_issues.empty:
+                for product, count in product_issues.items():
+                    alerts.append(f"⚠️ PRODUCT ISSUE: {product} has {count} deliveries with >15% discrepancy")
+                    alert_explanations.append(f"""
+                    **Why this alert?**
+                    - Product: {product}
+                    - Problematic deliveries: {count}
+                    - Threshold: >15% discrepancy
+                    - Recommended action: Check quality control for this product
+                    """)
+            
+            # Display alerts with hover explanations
             if alerts:
-                for alert in alerts[:5]:  # Show top 5 alerts
+                for i, alert in enumerate(alerts[:5]):  # Show top 5 alerts
                     if "CRITICAL" in alert:
-                        st.error(alert)
-                    elif "WARNING" in alert:
-                        st.warning(alert)
+                        with st.expander(f"{alert}", expanded=False):
+                            st.markdown(alert_explanations[i] if i < len(alert_explanations) else "**Investigate immediately**")
+                    elif "WARNING" in alert or "PRODUCT ISSUE" in alert:
+                        with st.expander(f"{alert}", expanded=False):
+                            st.markdown(alert_explanations[i] if i < len(alert_explanations) else "**Needs attention**")
                     else:
-                        st.info(alert)
+                        with st.expander(f"{alert}", expanded=False):
+                            st.markdown(alert_explanations[i] if i < len(alert_explanations) else "**Positive development**")
+                
                 if len(alerts) > 5:
                     st.caption(f"... and {len(alerts) - 5} more alerts")
             else:
                 st.success("✅ No active alerts. All suppliers performing well!")
-
+            
     # =========================================================
     # TAB 2: RECORD DELIVERY
     # =========================================================
