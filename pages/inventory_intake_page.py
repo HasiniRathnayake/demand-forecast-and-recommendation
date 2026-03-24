@@ -266,3 +266,16 @@ def render_inventory_intake() -> None:
         _render_workflow_tab(system)
     with tab2:
         _render_analytics_tab()
+
+
+def render_shrinkage_analytics_only() -> None:
+    """Render only the shrinkage analytics dashboard without intake workflow form."""
+    _inject_inventory_styles()
+
+    st.markdown('<div class="ii-main-header">Shrinkage Analytics</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="ii-sub-header">Inventory variance trends from recent intake audits</div>',
+        unsafe_allow_html=True,
+    )
+
+    _render_analytics_tab()
