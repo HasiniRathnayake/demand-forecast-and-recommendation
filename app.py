@@ -1,8 +1,4 @@
-<<<<<<< HEAD
 
-
-=======
->>>>>>> origin/main
 import streamlit as st
 
 from config.settings import APP_ICON
@@ -66,21 +62,6 @@ elif page == "demand_forecast":
         st.info("👈 Select a product from the sidebar to begin forecasting.")
         st.stop()
 
-<<<<<<< HEAD
-    with st.spinner(f"Generating forecast for **{selected_product.get('product_name', '')}**..."):
-        try:
-            hist_df, forecast_df, metrics = run_forecast(
-                product=selected_product,
-                forecast_days=settings["forecast_days"],
-                history_days=settings["history_days"],
-            )
-        except ValueError as ve:
-            st.error(f"❌ Validation error: {ve}")
-            st.stop()
-        except Exception as exc:
-            st.error(f"❌ Unexpected error: {exc}")
-            st.stop()
-=======
     # ── Cache forecast in session state so reruns triggered by input widgets
     # (override form, reason dropdown etc.) don't regenerate new random values
     # which would change current_val and break the same-value validation ────────
@@ -111,7 +92,6 @@ elif page == "demand_forecast":
                 st.stop()
     else:
         hist_df, forecast_df, metrics = st.session_state.forecast_cache
->>>>>>> origin/main
 
     col_name, col_cat, col_code = st.columns([3, 1, 1])
     col_name.markdown(
@@ -128,10 +108,6 @@ elif page == "demand_forecast":
     )
     st.markdown("---")
 
-<<<<<<< HEAD
-    tab1, tab2, tab3 = st.tabs(["📈 Forecast View", "📊 Historical Analysis", "📋 Data & Export"])
-    with tab1:
-=======
     # ── Tab navigation using radio so the selected tab persists across reruns.
     # st.tabs() in Streamlit 1.32 always resets to Tab 1 on rerun — a radio
     # button stored in session_state stays on the correct tab. ─────────────────
@@ -148,32 +124,21 @@ elif page == "demand_forecast":
     st.markdown("---")
 
     if selected_tab == "📈 Forecast View":
->>>>>>> origin/main
         render_forecast_tab(
             hist_df=hist_df, forecast_df=forecast_df, metrics=metrics,
             product=selected_product,
             show_confidence=settings["show_confidence"],
             show_weather_impact=settings["show_weather_impact"],
         )
-<<<<<<< HEAD
-    with tab2:
-        render_historical_tab(hist_df=hist_df, product=selected_product)
-    with tab3:
-=======
     elif selected_tab == "📊 Historical Analysis":
         render_historical_tab(hist_df=hist_df, product=selected_product)
     elif selected_tab == "📋 Data & Export":
->>>>>>> origin/main
         render_data_tab(hist_df=hist_df, forecast_df=forecast_df, product=selected_product)
 
     st.markdown(
         '<div class="footer">Sunrise Supermarket · Demand Forecasting · IT2021 AIML Project · SLIIT</div>',
         unsafe_allow_html=True,
     )
-<<<<<<< HEAD
-=======
-
->>>>>>> origin/main
 # ── Route: customer dashboard ─────────────────────────────────────────────────
 elif page == "customer_dashboard":
     from ui.styles import inject_styles
@@ -191,8 +156,6 @@ elif page == "customer_dashboard":
 
     from pages.customer_dashboard import show_customer_dashboard
     show_customer_dashboard(user.get('customer_id'))
-<<<<<<< HEAD
-=======
 
 elif page == "customer_settings":
     from ui.styles import inject_styles
@@ -211,7 +174,6 @@ elif page == "customer_settings":
     from pages.customer_settings import show_customer_settings
     show_customer_settings(user.get('customer_id'))
 
->>>>>>> origin/main
 # ── Route: loyalty module ─────────────────────────────────────────────────────
 elif page == "loyalty":
     from ui.styles import inject_styles
@@ -266,10 +228,6 @@ elif page == "loyalty":
         'IT24100971 · SLIIT</div>',
         unsafe_allow_html=True,
     )
-<<<<<<< HEAD
-=======
-
->>>>>>> origin/main
 # ── Route: short shipment detector ───────────────────────────────────────────
 elif page == "short_shipment":
     from ui.styles import inject_styles
@@ -306,24 +264,6 @@ elif page == "short_shipment":
         '<div class="footer">Sunrise Supermarket · Short-Shipment Detector · SLIIT</div>',
         unsafe_allow_html=True,
     )
-<<<<<<< HEAD
-# ── Fallback ───────────────────────────────────────────────────────────────────
-else:
-    st.session_state.current_page = "login"
-    st.rerun()
-
-#
-#app.py
-#======
-#Main entry point — handles page routing based on session state.
-
-#Flow:
- # Not logged in       →  Login / Register page
-  #Logged in (staff)   →  Main Dashboard hub → individual modules
-  #Logged in (customer)→  Main Dashboard hub → customer view
-
-#Run with:  streamlit run app.py
-=======
 
 # ── Route: stock replenishment ────────────────────────────────────────────────
 elif page == "stock_replenishment":
@@ -481,4 +421,3 @@ elif page == "waste_monitor":
 else:
     st.session_state.current_page = "login"
     st.rerun()
->>>>>>> origin/main
