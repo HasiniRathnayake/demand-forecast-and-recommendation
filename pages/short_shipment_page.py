@@ -247,37 +247,6 @@ def render_short_shipment():
             return pd.DataFrame()
 
     # =========================================================
-<<<<<<< HEAD
-=======
-    # Function to get pending purchase orders
-    # =========================================================
-    def get_pending_purchase_orders():
-        """Fetch purchase orders waiting to be delivered (from Replenishment system)"""
-        try:
-            if conn_type == "supabase":
-                response = conn.table("purchase_orders")\
-                    .select("po_id, status, replenishment_orders(product_code, suggested_qty), suppliers(supplier_name)")\
-                    .eq("status", "SENT").execute()
-                
-                data = []
-                for po in response.data:
-                    rep = po.get('replenishment_orders') or {}
-                    sup = po.get('suppliers') or {}
-                    data.append({
-                        "po_id": po.get('po_id'),
-                        "supplier_name": sup.get('supplier_name', 'Unknown'),
-                        "product_code": rep.get('product_code', 'Unknown'),
-                        "ordered_qty": rep.get('suggested_qty', 0)
-                    })
-                return pd.DataFrame(data)
-            else:
-                return pd.DataFrame()
-        except Exception as e:
-            st.error(f"Error fetching pending POs: {e}")
-            return pd.DataFrame()
-
-    # =========================================================
->>>>>>> origin/main
     # Function to ensure sample data exists
     # =========================================================
     def ensure_sample_data():
@@ -610,7 +579,6 @@ def render_short_shipment():
                 st.metric("Financial Impact", f"LKR {abs(total_impact):,.2f}")
 
             st.markdown("---")
-<<<<<<< HEAD
            
             # =========================================================
             # SECTION 4: QUICK STATS (New)
@@ -795,16 +763,6 @@ def render_short_shipment():
             else:
                 st.success("✅ No active alerts. All suppliers performing well!")
             
-=======
-            # Chart
-            st.markdown("**Delivery Status**")
-            status_counts = df['status'].value_counts().reset_index()
-            status_counts.columns = ['Status', 'Count']
-            fig = px.pie(status_counts, values='Count', names='Status', hole=0.35)
-            fig.update_layout(height=300)
-            st.plotly_chart(fig, use_container_width=True)
-
->>>>>>> origin/main
     # =========================================================
     # TAB 2: RECORD DELIVERY
     # =========================================================
@@ -824,7 +782,6 @@ def render_short_shipment():
         else:
             st.success(f"✅ Found {len(suppliers_df)} suppliers and {len(products_df)} products")
 
-<<<<<<< HEAD
             col_f1, col_f2 = st.columns(2)
             with col_f1:
                 order_num = st.text_input("Order/Invoice Number *")
@@ -836,50 +793,6 @@ def render_short_shipment():
                 product = st.selectbox("Product *", product_names)
                 ordered_qty = st.number_input("Ordered Quantity", min_value=0, value=100, step=10)
                 received_qty = st.number_input("Received Quantity", min_value=0, value=100, step=10)
-=======
-            # --- START INTEGRATION ---
-            pending_pos_df = get_pending_purchase_orders()
-            pending_options = ["— Manual Entry —"]
-            if not pending_pos_df.empty:
-                for _, po in pending_pos_df.iterrows():
-                    pending_options.append(f"PO: {str(po['po_id'])[:8].upper()} - {po['supplier_name']}")
-
-            st.markdown("##### 🔗 Connect to Auto-PO")
-            selected_po_label = st.selectbox("Select Pending Purchase Order", options=pending_options)
-            
-            is_auto = selected_po_label != "— Manual Entry —"
-            auto_po = None
-            if is_auto:
-                idx = pending_options.index(selected_po_label) - 1
-                auto_po = pending_pos_df.iloc[idx]
-            st.markdown("---")
-            # --- END INTEGRATION ---
-
-            col_f1, col_f2 = st.columns(2)
-            with col_f1:
-                default_order_num = str(auto_po['po_id']) if is_auto else ""
-                order_num = st.text_input("Order/Invoice Number *", value=default_order_num, disabled=is_auto)
-                
-                supplier_names = suppliers_df['supplier_name'].tolist()
-                default_sup_idx = supplier_names.index(auto_po['supplier_name']) if is_auto and auto_po['supplier_name'] in supplier_names else 0
-                supplier = st.selectbox("Supplier *", supplier_names, index=default_sup_idx, disabled=is_auto)
-                del_date = st.date_input("Delivery Date", value=date.today())
-            with col_f2:
-                product_names = products_df['product_name'].tolist()
-                
-                default_prod_idx = 0
-                if is_auto:
-                    code_match = products_df[products_df['product_code'] == auto_po['product_code']]
-                    if not code_match.empty:
-                        prod_name = code_match.iloc[0]['product_name']
-                        if prod_name in product_names:
-                            default_prod_idx = product_names.index(prod_name)
-                
-                product = st.selectbox("Product *", product_names, index=default_prod_idx, disabled=is_auto)
-                default_qty = int(auto_po['ordered_qty']) if is_auto else 100
-                ordered_qty = st.number_input("Ordered Quantity", min_value=0, value=default_qty, disabled=is_auto)
-                received_qty = st.number_input("Received Quantity", min_value=0, value=default_qty if is_auto else 100, step=10)
->>>>>>> origin/main
 
             disc_qty = received_qty - ordered_qty
             disc_pct = (disc_qty / ordered_qty * 100) if ordered_qty > 0 else 0
@@ -921,15 +834,6 @@ def render_short_shipment():
                                     "billed_quantity": ordered_qty,
                                     "received_quantity": received_qty
                                 }).execute()
-<<<<<<< HEAD
-=======
-                                
-                                # --- START PO HANDSHAKE ---
-                                if is_auto:
-                                    conn.table("purchase_orders").update({"status": "DELIVERED"}).eq("po_id", auto_po['po_id']).execute()
-                                # --- END PO HANDSHAKE ---
-                                
->>>>>>> origin/main
                             st.success("✅ Delivery recorded successfully!")
                             st.balloons()
                             st.rerun()
@@ -951,7 +855,6 @@ def render_short_shipment():
 
                     except Exception as e:
                         st.error(f"Error saving delivery: {e}")
-<<<<<<< HEAD
                             # =========================================================
     # TAB 2: RECORD DELIVERY (continued)
     # =========================================================
@@ -1346,96 +1249,3 @@ def render_short_shipment():
                     with col3:
                         if st.button("📧 Email Recommendations", use_container_width=True, key="rec_email"):
                             st.info("📧 Recommendations ready to email to procurement team")
-=======
-
-    # =========================================================
-    # TAB 3: ORDER RECONCILIATION
-    # =========================================================
-    with tab3:
-        st.markdown('<div class="section-title">📊 Order vs Received Reconciliation</div>', unsafe_allow_html=True)
-        st.markdown("Track discrepancies and automatically adjust future orders")
-
-        # Date Range Selector
-        col1, col2 = st.columns(2)
-        with col1:
-            rec_start_date = st.date_input("From Date", value=date.today() - timedelta(days=90), key="rec_start")
-        with col2:
-            rec_end_date = st.date_input("To Date", value=date.today(), key="rec_end")
-
-        # Load data
-        rec_df = get_delivery_data_for_reconciliation(rec_start_date, rec_end_date)
-
-        if rec_df.empty:
-            st.info("No delivery data found for the selected period.")
-        else:
-            # =========================================================
-            # SECTION 1: SUMMARY CARDS (ADD THIS)
-            # =========================================================
-            st.markdown("## 📊 Discrepancy Summary")
-
-            total_ordered = rec_df['ordered'].sum()
-            total_received = rec_df['received'].sum()
-            total_discrepancy = total_received - total_ordered
-            total_financial = rec_df['financial_impact'].sum()
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-                st.metric("Total Ordered", f"{total_ordered:,.0f} units")
-            with col2:
-                st.metric("Total Received", f"{total_received:,.0f} units")
-            with col3:
-                st.metric("Net Discrepancy", f"{total_discrepancy:+,.0f} units",
-                          delta=f"{total_discrepancy:+,.0f}")
-            with col4:
-                st.metric("Financial Impact", f"LKR {total_financial:+,.2f}",
-                          delta=f"LKR {total_financial:+,.2f}",
-                          delta_color="inverse")
-
-            # =========================================================
-            # SECTION 3: SUPPLIER RECONCILIATION (YOUR CODE)
-            # =========================================================
-            st.markdown("## 🏭 Supplier Reconciliation")
-
-            suppliers_list = rec_df['supplier'].unique().tolist()
-            selected_supplier = st.selectbox("Select Supplier for Reconciliation", ["All Suppliers"] + suppliers_list)
-
-            if selected_supplier != "All Suppliers":
-                filtered_df = rec_df[rec_df['supplier'] == selected_supplier]
-            else:
-                filtered_df = rec_df
-
-            adjustments_df = calculate_next_order_adjustment(filtered_df)
-
-            if adjustments_df is not None and not adjustments_df.empty:
-                st.markdown("### 📋 Recommended Next Order Adjustments")
-
-                display_adjustments = adjustments_df[[
-                    'product', 'cumulative_shortage', 'cumulative_overage',
-                    'net_position', 'adjustment_type', 'action'
-                ]].copy()
-
-                display_adjustments.columns = [
-                    'Product', 'Cumulative Short', 'Cumulative Over',
-                    'Net Position', 'Adjustment Type', 'Recommended Action'
-                ]
-
-                st.dataframe(display_adjustments, use_container_width=True)
-
-                total_shortage = adjustments_df['cumulative_shortage'].sum()
-                total_credit = adjustments_df['cumulative_overage'].sum()
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.info(f"📦 **Total Shortage to Compensate:** {total_shortage:,.0f} units")
-                with col2:
-                    st.success(f"💰 **Total Credit Available:** {total_credit:,.0f} units")
-                with col3:
-                    net_adjustment = total_shortage - total_credit
-                    if net_adjustment > 0:
-                        st.warning(f"⚖️ **Net Additional Needed:** {net_adjustment:,.0f} units")
-                    else:
-                        st.success(f"⚖️ **Net Credit Available:** {abs(net_adjustment):,.0f} units")
-            else:
-                st.info("No adjustments needed for the selected supplier(s)")
->>>>>>> origin/main
