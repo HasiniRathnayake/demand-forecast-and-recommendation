@@ -980,7 +980,7 @@ def render_short_shipment():
         return pd.DataFrame(adjustments)
     
      
-    # =========================================================
+        # =========================================================
     # TAB 3: ORDER RECONCILIATION (Clean - Only Adjustments)
     # =========================================================
     with tab3:
@@ -999,7 +999,7 @@ def render_short_shipment():
                 "📅 From Date", 
                 value=today_date - timedelta(days=90), 
                 key="rec_start",
-                max_value=today_date  # Prevents future dates
+                max_value=today_date
             )
         
         with col2:
@@ -1007,7 +1007,7 @@ def render_short_shipment():
                 "📅 To Date", 
                 value=today_date, 
                 key="rec_end",
-                max_value=today_date  # Prevents future dates
+                max_value=today_date
             )
         
         # Date Validation
@@ -1021,7 +1021,7 @@ def render_short_shipment():
         
         if date_error:
             st.error(date_error)
-            st.stop()  # Stop execution if date validation fails
+            st.stop()
         
         # =========================================================
         # Load data with validated dates
@@ -1033,25 +1033,15 @@ def render_short_shipment():
             st.info("📝 Please record deliveries first in the 'Record Delivery' tab.")
         else:
             # =========================================================
-            # Show Filter Only
+            # Show Filter Only (Single instance - FIXED)
             # =========================================================
             show_only = st.selectbox(
                 "🔍 Show",
                 ["All Adjustments", "Only Shortages", "Only Credits", "No Adjustment Needed"],
-                key="rec_show"
+                key="rec_show_filter"
             )
             
-            # Calcula
-            # =========================================================
-            # Show Filter Only (No Supplier Dropdown - Removed)
-            # =========================================================
-            show_only = st.selectbox(
-                "🔍 Show",
-                ["All Adjustments", "Only Shortages", "Only Credits", "No Adjustment Needed"],
-                key="rec_show"
-            )
-            
-            # Calculate adjustments for ALL suppliers (no filter)
+            # Calculate adjustments for ALL suppliers
             adjustments_df = calculate_next_order_adjustment(rec_df)
             
             if adjustments_df is None or adjustments_df.empty:
@@ -1150,7 +1140,39 @@ def render_short_shipment():
                         fig.update_layout(height=400)
                         st.plotly_chart(fig, use_container_width=True)
                     
-                   
+                    # =========================================================
+                    # SUMMARY BY SUPPLIER
+                    # =========================================================
+                    st.markdown("---")
+                    st.markdown("## 🏭 Summary by Supplier")
+                    
+                    supplier_summary = adjustments_df.groupby('supplier').agg({
+                        'cumulative_shortage': 'sum',
+                        'cumulative_overage': 'sum',
+                        'adjustment_qty': 'sum'
+                    }).reset_index()
+                    
+                    supplier_summary['net'] = supplier_summary['cumulative_shortage'] - supplier_summary['cumulative_overage']
+                    supplier_summary = supplier_summary.sort_values('net', ascending=False)
+                    
+                    for _, row in supplier_summary.iterrows():
+                        col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+                        with col1:
+                            st.write(f"**{row['supplier']}**")
+                        with col2:
+                            if row['cumulative_shortage'] > 0:
+                                st.write(f"📦 Short: {row['cumulative_shortage']:,.0f} units")
+                        with col3:
+                            if row['cumulative_overage'] > 0:
+                                st.write(f"💰 Credit: {row['cumulative_overage']:,.0f} units")
+                        with col4:
+                            if row['net'] > 0:
+                                st.warning(f"+{row['net']:,.0f} to add")
+                            elif row['net'] < 0:
+                                st.success(f"{row['net']:+,.0f} credit")
+                            else:
+                                st.success("✅ Balanced")
+                    
                     # =========================================================
                     # ACTION BUTTONS
                     # =========================================================
@@ -1181,4 +1203,4 @@ def render_short_shipment():
                         if st.button("📧 Email Recommendations", use_container_width=True, key="rec_email"):
                             st.info("📧 Recommendations ready to email to procurement team")
                     
-                    
+                  
