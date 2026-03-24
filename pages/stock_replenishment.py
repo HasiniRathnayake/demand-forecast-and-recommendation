@@ -29,15 +29,20 @@ def fetch_suppliers():
     return resp.json() if resp.status_code == 200 else []
 
 def fetch_purchase_orders():
-    url = f"{SUPABASE_URL}/rest/v1/purchase_orders?select=*,suppliers(supplier_name)&order=created_at.desc"
+    url = f"{SUPABASE_URL}/rest/v1/purchase_orders?select=*,suppliers(supplier_name),replenishment_orders(product_code,suggested_qty)&order=created_at.desc"
     resp = requests.get(url, headers=HEADERS)
     return resp.json() if resp.status_code == 200 else []
 
 # --- Mutations ---
-def update_order_status(order_id, status, supplier_id=None):
+def update_order_status(order_id, status, supplier_id=None, final_qty=None):
     url = f"{SUPABASE_URL}/rest/v1/{TABLE_REPLENISHMENT}?order_id=eq.{order_id}"
     req_headers = {**HEADERS, "Prefer": "return=minimal"}
-    resp = requests.patch(url, headers=req_headers, json={"status": status})
+    
+    payload = {"status": status}
+    if final_qty is not None:
+        payload["suggested_qty"] = final_qty
+        
+    resp = requests.patch(url, headers=req_headers, json=payload)
     
     if resp.status_code in [200, 204]:
         if status == 'APPROVED' and supplier_id:
@@ -51,10 +56,59 @@ def update_order_status(order_id, status, supplier_id=None):
     else:
         st.error("Failed to update status.")
 
+def save_override_log(order_id, code, predicted, ordered, reason):
+    user = st.session_state.get("user", {})
+    username = user.get("username", "Unknown Admin").capitalize()
+    
+    url = f"{SUPABASE_URL}/rest/v1/override_logs"
+    resp = requests.post(url, headers=HEADERS, json={
+        "order_id": order_id,
+        "product_code": code,
+        "predicted_quantity": predicted,
+        "ordered_quantity": ordered,
+        "anomaly_flag": True,
+        "override_reason": reason,
+        "overridden_by": username
+    })
+    if resp.status_code not in [200, 201]:
+        st.error(f"Failed to save override log. ({resp.status_code})")
+
+@st.dialog("⚠️ Anomaly Detected: Quantity Override")
+def override_confirmation_dialog(order_id, code, predicted, ordered, supplier_id):
+    st.warning("This order quantity is **significantly outside** the ML-expected range. Are you sure you want to continue?")
+    st.markdown(f"**Predicted:** {predicted} units — **Requested:** {ordered} units")
+    
+    reason = st.text_area("Reason for Override (Mandatory)", placeholder="Example: Expected seasonal demand spike...")
+    
+    rc1, rc2 = st.columns(2)
+    if rc1.button("Cancel", use_container_width=True):
+        st.rerun()
+    if rc2.button("Yes, I am sure", type="primary", use_container_width=True):
+        if not reason.strip():
+            st.error("Please provide a reason to continue.")
+        else:
+            save_override_log(order_id, code, predicted, ordered, reason)
+            update_order_status(order_id, 'APPROVED', supplier_id, final_qty=ordered)
+            st.rerun()
+
 def update_po_status(po_id, status):
     url = f"{SUPABASE_URL}/rest/v1/purchase_orders?po_id=eq.{po_id}"
     req_headers = {**HEADERS, "Prefer": "return=minimal"}
     requests.patch(url, headers=req_headers, json={"status": status})
+    st.rerun()
+
+def delete_purchase_order(po_id, rep_order_id):
+    # 1. Delete the generated Purchase Order
+    url_po = f"{SUPABASE_URL}/rest/v1/purchase_orders?po_id=eq.{po_id}"
+    requests.delete(url_po, headers=HEADERS)
+    
+    # 2. Revert the parent ML recommendation status to cancelled
+    if rep_order_id:
+        url_rep = f"{SUPABASE_URL}/rest/v1/{TABLE_REPLENISHMENT}?order_id=eq.{rep_order_id}"
+        req_headers = {**HEADERS, "Prefer": "return=minimal"}
+        requests.patch(url_rep, headers=req_headers, json={"status": "CANCELLED"})
+        
+    st.toast("Order successfully canceled!", icon="🛑")
     st.rerun()
 
 def save_supplier(supplier_id, name, email, phone):
@@ -167,7 +221,9 @@ def render_stock_replenishment():
                 c2.markdown(badge, unsafe_allow_html=True)
                 
                 c3.write(reorder)
-                c4.markdown(f"**{o.get('suggested_qty')}**")
+                predicted_qty = int(o.get('suggested_qty', 1))
+                with c4:
+                    manual_qty = int(st.number_input("Qty", min_value=1, value=predicted_qty, step=1, key=f"qty_{o['order_id']}", label_visibility="collapsed"))
                 
                 with c5:
                     with st.popover("🧠"):
@@ -183,8 +239,13 @@ def render_stock_replenishment():
                         if not selected_sup_id:
                             st.warning("Please add a supplier first!")
                         else:
-                            update_order_status(o['order_id'], 'APPROVED', selected_sup_id)
-                            st.rerun()
+                            # Anomaly Detection algorithm: >20% deviation OR >= 5 units absolute delta
+                            deviation_pct = abs(manual_qty - predicted_qty) / max(predicted_qty, 1)
+                            if deviation_pct > 0.20 or abs(manual_qty - predicted_qty) >= 5:
+                                override_confirmation_dialog(o['order_id'], o.get('product_code'), predicted_qty, manual_qty, selected_sup_id)
+                            else:
+                                update_order_status(o['order_id'], 'APPROVED', selected_sup_id, final_qty=manual_qty)
+                                st.rerun()
                     if b2.button("❌", key=f"rej_{o['order_id']}", help="Reject"):
                         update_order_status(o['order_id'], 'REJECTED')
                         st.rerun()
@@ -209,25 +270,45 @@ def render_stock_replenishment():
         if not pos:
             st.info("No purchase orders have been automatically generated yet. Approve an ML recommendation first.")
         else:
+            h1, h2, h3, h4, h5 = st.columns([1.5, 2.5, 3, 1.5, 2.5])
+            h1.caption("**Order ID**")
+            h2.caption("**🏢 Supplier**")
+            h3.caption("**📦 Item & Quantity**")
+            h4.caption("**Status**")
+            h5.caption("**Action**")
+
             for p in pos:
                 with st.container(border=True):
-                    poc1, poc2, poc3, poc4 = st.columns([2, 3, 2, 2])
-                    poc1.markdown(f"**{p.get('po_id')[:8].upper()}**")
+                    poc1, poc2, poc3, poc4, poc5 = st.columns([1.5, 2.5, 3, 1.5, 2.5])
+                    
+                    po_display_id = str(p.get('po_id', ''))[:8].upper()
+                    poc1.markdown(f"**{po_display_id}**")
+                    
                     sup_name = p.get('suppliers', {}).get('supplier_name', 'Unknown') if p.get('suppliers') else 'Unknown'
-                    poc2.write(f"🏢 {sup_name}")
+                    poc2.write(f"{sup_name}")
+                    
+                    # New: Product Details extracted from the join
+                    rep = p.get('replenishment_orders') or {}
+                    p_code = rep.get('product_code', 'UNKNOWN')
+                    qty = rep.get('suggested_qty', 0)
+                    p_name = catalog_map.get(p_code, get_fallback_name(p_code))
+                    poc3.markdown(f"**{p_name}**<br/><small>{qty} units</small>", unsafe_allow_html=True)
                     
                     status = p.get('status')
                     if status == 'PENDING_DISPATCH':
-                        poc3.markdown('<span class="badge bg-pending">Pending Dispatch</span>', unsafe_allow_html=True)
+                        poc4.markdown('<span class="badge bg-pending">Pending Dispatch</span>', unsafe_allow_html=True)
                     elif status == 'SENT':
-                        poc3.markdown('<span class="badge bg-approved">Sent to Supplier</span>', unsafe_allow_html=True)
+                        poc4.markdown('<span class="badge bg-approved">Sent to Supplier</span>', unsafe_allow_html=True)
                     else:
-                        poc3.markdown('<span class="badge" style="background:#dbeafe;color:#1e3a8a;">Delivered</span>', unsafe_allow_html=True)
+                        poc4.markdown('<span class="badge" style="background:#dbeafe;color:#1e3a8a;">Delivered</span>', unsafe_allow_html=True)
                         
-                    with poc4:
+                    with poc5:
                         if status == 'PENDING_DISPATCH':
-                            if st.button("Mark as Sent ✉️", key=f"send_{p['po_id']}", use_container_width=True):
+                            bc1, bc2 = st.columns(2)
+                            if bc1.button("Send ✉️", key=f"send_{p['po_id']}", use_container_width=True, help="Mark as Sent to Supplier"):
                                 update_po_status(p['po_id'], 'SENT')
+                            if bc2.button("Cancel 🗑️", type="primary", key=f"del_{p['po_id']}", use_container_width=True, help="Permanently Delete Order"):
+                                delete_purchase_order(p['po_id'], p.get('replenishment_order_id'))
                         elif status == 'SENT':
                             if st.button("Mark Delivered 📥", key=f"deliv_{p['po_id']}", use_container_width=True):
                                 update_po_status(p['po_id'], 'DELIVERED')

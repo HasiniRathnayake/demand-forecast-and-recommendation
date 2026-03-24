@@ -11,9 +11,8 @@ import streamlit as st
 
 from data.inventory_intake_repository import (
     fetch_ai_products,
-    fetch_latest_forecast,
+    fetch_latest_system_stock,
     fetch_recent_intake_logs,
-    fetch_suppliers,
     save_intake_log,
 )
 from services.auth_service import get_current_user
@@ -97,7 +96,7 @@ def _render_sidebar() -> None:
                 <p class="ii-profile-title">Operator Profile</p>
                 <p class="ii-profile-text"><b>Name:</b> {display_name}</p>
                 <p class="ii-profile-text"><b>Staff ID:</b> {staff_id}</p>
-                <p class="ii-profile-text"><b>Role:</b> AI Intake Auditor</p>
+                <p class="ii-profile-text"><b>Role:</b> Inventory Cycle Counter</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -130,24 +129,19 @@ def _status_product_name(row: dict) -> str:
 
 def _render_workflow_tab(system: SmartIntakeSystem) -> None:
     msg_spot = st.empty()
-    suppliers = fetch_suppliers()
     ai_products = fetch_ai_products()
 
     if st.session_state.ii_step == 1:
-        st.markdown("#### Step 1: Shipment Identification")
-        st.info("Select incoming supplier and the AI-supported product.")
+        st.markdown("#### Step 1: Product Identification")
+        st.info("Select the product you are auditing on the warehouse floor.")
 
-        col1, col2 = st.columns(2)
-        vendor = col1.selectbox("Supplier", ["Select Supplier"] + list(suppliers.keys()), key="ii_supplier")
-        product = col2.selectbox("Product", ["Select Product"] + list(ai_products.keys()), key="ii_product")
+        product = st.selectbox("Product", ["Select Product"] + list(ai_products.keys()), key="ii_product")
 
         if st.button("Proceed to Physical Count", type="primary", use_container_width=True):
-            if vendor == "Select Supplier" or product == "Select Product":
-                msg_spot.error("Please select both a valid supplier and product.")
+            if product == "Select Product":
+                msg_spot.error("Please select a valid product.")
             else:
                 st.session_state.ii_temp_data = {
-                    "supplier": vendor,
-                    "supplier_id": suppliers[vendor],
                     "product": product,
                     "product_code": ai_products[product],
                 }
@@ -157,16 +151,18 @@ def _render_workflow_tab(system: SmartIntakeSystem) -> None:
     elif st.session_state.ii_step == 2:
         product_name = st.session_state.ii_temp_data.get("product", "Selected product")
         p_code = st.session_state.ii_temp_data.get("product_code", "")
-        forecast_id, ai_qty = fetch_latest_forecast(p_code)
+        
+        # New Fetch logic mapping to Replenishment Orders
+        forecast_id, sys_stock = fetch_latest_system_stock(p_code)
 
-        st.markdown(f"#### Step 2: Validate {product_name}")
-        st.info(f"AI forecasted demand: {ai_qty:.2f} units.")
+        st.markdown(f"#### Step 2: Audit {product_name}")
+        st.info(f"ML System Expects: **{sys_stock:.0f} units** on shelf.")
 
         with st.form("ii_entry_form"):
             actual = st.number_input("Enter Actual Physical Count", min_value=0.0, step=1.0)
             remarks = st.text_area(
                 "Variance Remarks (required when anomaly is detected)",
-                placeholder="Explain discrepancies, damages, or shortages...",
+                placeholder="Explain shrinkage, damages, or miscounts...",
             )
 
             left, right = st.columns(2)
@@ -178,11 +174,11 @@ def _render_workflow_tab(system: SmartIntakeSystem) -> None:
                 st.rerun()
 
             if save_clicked:
-                is_anomaly, msg, _severity = system.detect_anomaly(ai_qty, actual)
+                is_anomaly, msg, _severity = system.detect_anomaly(sys_stock, actual)
 
                 if requires_remarks(is_anomaly, remarks):
                     msg_spot.warning(
-                        "An anomaly was detected. Please provide at least 5 characters in remarks for audit trail."
+                        "A shrinkage/overage anomaly was detected. Please provide remarks for the audit trail."
                     )
                     return
 
@@ -190,38 +186,38 @@ def _render_workflow_tab(system: SmartIntakeSystem) -> None:
                 if is_anomaly:
                     st.session_state.ii_anomalies_caught += 1
                     msg_spot.markdown(
-                        f'<div class="ii-error-banner"><b>ANOMALY BLOCKED:</b> {msg}</div>',
+                        f'<div class="ii-error-banner"><b>SHRINKAGE ANOMALY:</b> {msg}</div>',
                         unsafe_allow_html=True,
                     )
                 else:
-                    msg_spot.success(f"Match verified: {msg}")
+                    msg_spot.success(f"Audit Verified: {msg}")
 
                 current_user = get_current_user() or {}
                 payload = {
-                    "supplier_id": st.session_state.ii_temp_data.get("supplier_id"),
+                    "supplier_id": "CYCLE-COUNT", # Deprecated logic
                     "product_code": p_code,
                     "forecast_id": forecast_id,
                     "staff_id": str(current_user.get("user_id", "")),
-                    "expected_qty": float(ai_qty),
+                    "expected_qty": float(sys_stock),
                     "actual_qty": float(actual),
                     "is_anomaly": bool(is_anomaly),
                     "remarks": remarks,
                 }
 
                 if save_intake_log(payload):
-                    st.toast("Record synced to database.")
+                    st.toast("Audit record synced to database.")
                     st.session_state.ii_step = 1
                     st.session_state.ii_temp_data = {}
                 else:
-                    msg_spot.error("Failed to save intake record. Please retry.")
+                    msg_spot.error("Failed to save audit record. Please retry.")
 
 
 def _render_analytics_tab() -> None:
-    st.markdown("#### System Audit Trail and Anomalies")
+    st.markdown("#### System Audit Trail and Shrinkage")
 
     rows = fetch_recent_intake_logs(limit=20)
     if not rows:
-        st.info("No intake records found.")
+        st.info("No audit records found.")
         return
 
     chart_data = []
@@ -230,9 +226,9 @@ def _render_analytics_tab() -> None:
             {
                 "Timestamp": pd.to_datetime(row.get("created_at")).strftime("%Y-%m-%d %H:%M"),
                 "Product": _status_product_name(row),
-                "AI Expected": float(row.get("expected_qty") or 0.0),
+                "System Expected": float(row.get("expected_qty") or 0.0),
                 "Physical Count": float(row.get("actual_qty") or 0.0),
-                "Status": "Anomaly" if row.get("is_anomaly") else "Verified",
+                "Status": "Shrinkage Anomaly" if row.get("is_anomaly") else "Verified",
             }
         )
 
@@ -246,8 +242,8 @@ def _render_analytics_tab() -> None:
         st.info("No rows match your filter.")
         return
 
-    st.caption("Bar chart compares AI forecasted quantity and physical count.")
-    st.bar_chart(df.set_index("Product")[["AI Expected", "Physical Count"]])
+    st.caption("Bar chart compares ML systemic stock and physical count findings.")
+    st.bar_chart(df.set_index("Product")[["System Expected", "Physical Count"]])
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
@@ -255,16 +251,16 @@ def render_inventory_intake() -> None:
     _inject_inventory_styles()
     _init_state()
 
-    st.markdown('<div class="ii-main-header">Smart Inventory Intake</div>', unsafe_allow_html=True)
+    st.markdown('<div class="ii-main-header">Smart Stock Audit</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="ii-sub-header">AI-assisted intake validation and anomaly audit trail</div>',
+        '<div class="ii-sub-header">Cycle counting logic bridging ML system stock with physical shelf anomalies</div>',
         unsafe_allow_html=True,
     )
 
     _render_sidebar()
 
     system = SmartIntakeSystem()
-    tab1, tab2 = st.tabs(["Delivery Entry Workflow", "Real-Time Analytics Dashboard"])
+    tab1, tab2 = st.tabs(["Warehouse Cycle Counting", "Shrinkage Analytics Dashboard"])
 
     with tab1:
         _render_workflow_tab(system)
