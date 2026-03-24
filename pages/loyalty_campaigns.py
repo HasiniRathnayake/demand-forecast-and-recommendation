@@ -56,7 +56,7 @@ TEMPLATES = {
     },
 }
 
-# ── Friendly segment names (never show negative labels to customers) ──────────
+# ── Friendly segment names for email preview 
 FRIENDLY_SEGMENT = {
     'VIP Customer':     'VIP Member',
     'High Value':       'Valued Member',
