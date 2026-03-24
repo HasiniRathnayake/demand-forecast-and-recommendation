@@ -679,6 +679,105 @@ def render_short_shipment():
 
                     except Exception as e:
                         st.error(f"Error saving delivery: {e}")
+                            # =========================================================
+    # TAB 2: RECORD DELIVERY (continued)
+    # =========================================================
+    with tab2:
+        st.markdown('<div class="section-title">📦 Record New Delivery</div>', unsafe_allow_html=True)
+
+        # ... existing code for form and save button ...
+
+        # =========================================================
+        # ADD THIS SECTION - View Recent Deliveries Table
+        # =========================================================
+        st.markdown("---")
+        st.markdown("## 📋 Recent Deliveries")
+        
+        # Fetch recent deliveries to display
+        if conn_type == "supabase":
+            try:
+                # Get recent deliveries with supplier and product info
+                recent_response = conn.table("deliveries")\
+                    .select("""
+                        delivery_id,
+                        invoice_number,
+                        delivery_date,
+                        suppliers(supplier_name),
+                        delivery_items(
+                            product_code,
+                            billed_quantity,
+                            received_quantity,
+                            product_catalog(product_name)
+                        )
+                    """)\
+                    .order("delivery_date", desc=True)\
+                    .limit(20)\
+                    .execute()
+                
+                recent_data = []
+                for delivery in recent_response.data:
+                    supplier_name = delivery.get('suppliers', {}).get('supplier_name', 'Unknown') if delivery.get('suppliers') else 'Unknown'
+                    
+                    for item in delivery.get('delivery_items', []):
+                        product_info = item.get('product_catalog', {})
+                        billed = float(item.get('billed_quantity', 0))
+                        received = float(item.get('received_quantity', 0))
+                        disc = received - billed
+                        
+                        recent_data.append({
+                            'Date': delivery.get('delivery_date'),
+                            'Invoice #': delivery.get('invoice_number'),
+                            'Supplier': supplier_name,
+                            'Product': product_info.get('product_name', 'Unknown'),
+                            'Ordered': f"{billed:,.0f}",
+                            'Received': f"{received:,.0f}",
+                            'Variance': f"{disc:+,.0f}",
+                            'Status': '⚠️ Short' if disc < 0 else '📦 Over' if disc > 0 else '✅ OK'
+                        })
+                
+                if recent_data:
+                    recent_df = pd.DataFrame(recent_data)
+                    st.dataframe(recent_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No deliveries recorded yet.")
+                    
+            except Exception as e:
+                st.info(f"Unable to load recent deliveries: {e}")
+                
+        else:
+            # SQLite version
+            try:
+                db_conn = sqlite3.connect('supermarket.db')
+                query = """
+                    SELECT 
+                        d.delivery_date as Date,
+                        d.order_number as 'Invoice #',
+                        s.supplier_name as Supplier,
+                        p.product_name as Product,
+                        d.ordered_quantity as Ordered,
+                        d.received_quantity as Received,
+                        d.discrepancy_quantity as Variance,
+                        CASE 
+                            WHEN d.discrepancy_quantity < 0 THEN '⚠️ Short'
+                            WHEN d.discrepancy_quantity > 0 THEN '📦 Over'
+                            ELSE '✅ OK'
+                        END as Status
+                    FROM deliveries d
+                    LEFT JOIN suppliers s ON d.supplier_id = s.supplier_id
+                    LEFT JOIN product_catalog p ON d.product_code = p.product_code
+                    ORDER BY d.delivery_date DESC
+                    LIMIT 20
+                """
+                recent_df = pd.read_sql_query(query, db_conn)
+                db_conn.close()
+                
+                if not recent_df.empty:
+                    st.dataframe(recent_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No deliveries recorded yet.")
+                    
+            except Exception as e:
+                st.info(f"Unable to load recent deliveries: {e}")
 
     # =========================================================
     # TAB 3: ORDER RECONCILIATION
