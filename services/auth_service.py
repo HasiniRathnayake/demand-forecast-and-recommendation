@@ -8,6 +8,7 @@ Roles:
   staff    → access to all dashboards (demand forecast, replenishment, etc.)
   customer → access to customer loyalty dashboard only
   admin    → full access + user management
+    supplier → access to supplier order dashboard only
 """
 
 from __future__ import annotations
@@ -70,7 +71,7 @@ def validate_registration_inputs(
         errors.append("❌ Passwords do not match.")
 
     # Role
-    if role not in ("staff", "customer", "admin"):
+    if role not in ("staff", "customer", "admin", "supplier"):
         errors.append("❌ Invalid role selected.")
 
     return errors
@@ -93,6 +94,7 @@ def register_user(
     email: str,
     password: str,
     role: str = "staff",
+    supplier_id: str | None = None,
 ) -> tuple[bool, str]:
     """
     Register a new user.
@@ -121,6 +123,9 @@ def register_user(
         if existing_email.data:
             return False, "❌ Email already registered. Please login instead."
 
+        if role == "supplier" and not (supplier_id or "").strip():
+            return False, "❌ Supplier accounts require a Supplier ID."
+
         # Hash password and insert (user_id is auto-increment integer)
         hashed = hash_password(password)
         client.table("users").insert({
@@ -128,6 +133,7 @@ def register_user(
             "email":         email.strip().lower(),
             "password_hash": hashed,
             "role":          role,
+            "supplier_id":   (supplier_id or None),
             "created_at":    datetime.now().isoformat(),
         }).execute()
 
@@ -144,12 +150,21 @@ def login_user(username: str, password: str) -> tuple[bool, str, dict | None]:
     """
     try:
         client = get_client()
-        response = (
-            client.table("users")
-            .select("user_id, username, email, role, password_hash, customer_id")
-            .eq("username", username.strip().lower())
-            .execute()
-        )
+        # Try with supplier_id first; fallback keeps compatibility with older schema.
+        try:
+            response = (
+                client.table("users")
+                .select("user_id, username, email, role, password_hash, customer_id, supplier_id")
+                .eq("username", username.strip().lower())
+                .execute()
+            )
+        except Exception:
+            response = (
+                client.table("users")
+                .select("user_id, username, email, role, password_hash, customer_id")
+                .eq("username", username.strip().lower())
+                .execute()
+            )
 
         if not response.data:
             return False, "❌ Username not found.", None
@@ -190,7 +205,7 @@ def is_authenticated() -> bool:
 
 
 def get_user_role() -> str:
-    """Return role of current user: 'staff', 'customer', or 'admin'."""
+    """Return role of current user: 'staff', 'customer', 'admin', or 'supplier'."""
     user = get_current_user()
     return user.get("role", "") if user else ""
 
