@@ -1,154 +1,35 @@
 import streamlit as st
 import requests
 import pandas as pd
+import math
+from datetime import datetime, timezone, timedelta
 
 from config.settings import SUPABASE_URL, SUPABASE_KEY
 from ui.styles import inject_styles
+from pages.stock_replenishment_helpers import (
+    _commit_override,
+    delete_purchase_order,
+    delete_supplier,
+    fetch_approval_logs,
+    fetch_forecast_dates,
+    fetch_orders,
+    fetch_product_supplier_map,
+    fetch_products,
+    fetch_purchase_orders,
+    fetch_replenishment_status,
+    fetch_suppliers,
+    override_confirmation_dialog,
+    save_supplier,
+    send_po_email,
+    update_order_status,
+    update_po_status,
+)
 
-TABLE_REPLENISHMENT = "replenishment_orders"
 HEADERS = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json",
 }
-
-# --- Supabase Fetchers ---
-def fetch_orders():
-    url = f"{SUPABASE_URL}/rest/v1/{TABLE_REPLENISHMENT}?select=*&order=created_at.desc"
-    resp = requests.get(url, headers=HEADERS)
-    return resp.json() if resp.status_code == 200 else []
-
-def fetch_products():
-    url = f"{SUPABASE_URL}/rest/v1/product_catalog?select=product_code,product_name"
-    resp = requests.get(url, headers=HEADERS)
-    return {p["product_code"]: p.get("product_name", "Unknown") for p in resp.json()} if resp.status_code == 200 else {}
-
-def fetch_suppliers():
-    url = f"{SUPABASE_URL}/rest/v1/suppliers?select=*&order=supplier_name.asc"
-    resp = requests.get(url, headers=HEADERS)
-    return resp.json() if resp.status_code == 200 else []
-
-def fetch_purchase_orders():
-    url = f"{SUPABASE_URL}/rest/v1/purchase_orders?select=*,suppliers(supplier_name),replenishment_orders(product_code,suggested_qty)&order=created_at.desc"
-    resp = requests.get(url, headers=HEADERS)
-    return resp.json() if resp.status_code == 200 else []
-
-# --- Mutations ---
-def update_order_status(order_id, status, supplier_id=None, final_qty=None):
-    url = f"{SUPABASE_URL}/rest/v1/{TABLE_REPLENISHMENT}?order_id=eq.{order_id}"
-    req_headers = {**HEADERS, "Prefer": "return=minimal"}
-    
-    payload = {"status": status}
-    if final_qty is not None:
-        payload["suggested_qty"] = final_qty
-        
-    resp = requests.patch(url, headers=req_headers, json=payload)
-    
-    if resp.status_code in [200, 204]:
-        if status == 'APPROVED' and supplier_id:
-            po_url = f"{SUPABASE_URL}/rest/v1/purchase_orders"
-            requests.post(po_url, headers=req_headers, json={
-                "replenishment_order_id": order_id,
-                "supplier_id": supplier_id,
-                "status": "PENDING_DISPATCH"
-            })
-        st.toast(f"Order {order_id} marked as {status}!", icon="✅")
-    else:
-        st.error("Failed to update status.")
-
-def save_override_log(order_id, code, predicted, ordered, reason):
-    user = st.session_state.get("user", {})
-    username = user.get("username", "Unknown Admin").capitalize()
-    
-    url = f"{SUPABASE_URL}/rest/v1/override_logs"
-    resp = requests.post(url, headers=HEADERS, json={
-        "order_id": order_id,
-        "product_code": code,
-        "predicted_quantity": predicted,
-        "ordered_quantity": ordered,
-        "anomaly_flag": True,
-        "override_reason": reason,
-        "overridden_by": username
-    })
-    if resp.status_code not in [200, 201]:
-        st.error(f"Failed to save override log. ({resp.status_code})")
-
-def _commit_override(order_id, code, predicted, ordered, supplier_id, reason):
-    save_override_log(order_id, code, predicted, ordered, reason)
-    update_order_status(order_id, 'APPROVED', supplier_id, final_qty=ordered)
-    st.session_state.pop("pending_override", None)
-    st.session_state.pop("override_reason_inline", None)
-    st.rerun()
-
-
-if hasattr(st, "dialog"):
-    @st.dialog("⚠️ Anomaly Detected: Quantity Override")
-    def _override_confirmation_dialog(order_id, code, predicted, ordered, supplier_id):
-        st.warning("This order quantity is **significantly outside** the ML-expected range. Are you sure you want to continue?")
-        st.markdown(f"**Predicted:** {predicted} units — **Requested:** {ordered} units")
-
-        reason = st.text_area("Reason for Override (Mandatory)", placeholder="Example: Expected seasonal demand spike...")
-
-        rc1, rc2 = st.columns(2)
-        if rc1.button("Cancel", use_container_width=True):
-            st.rerun()
-        if rc2.button("Yes, I am sure", type="primary", use_container_width=True):
-            if not reason.strip():
-                st.error("Please provide a reason to continue.")
-            else:
-                _commit_override(order_id, code, predicted, ordered, supplier_id, reason)
-
-
-def override_confirmation_dialog(order_id, code, predicted, ordered, supplier_id):
-    # Streamlit < 1.34 does not support st.dialog; fallback to inline confirm panel.
-    if hasattr(st, "dialog"):
-        _override_confirmation_dialog(order_id, code, predicted, ordered, supplier_id)
-        return
-
-    st.session_state["pending_override"] = {
-        "order_id": order_id,
-        "code": code,
-        "predicted": predicted,
-        "ordered": ordered,
-        "supplier_id": supplier_id,
-    }
-    st.rerun()
-
-def update_po_status(po_id, status):
-    url = f"{SUPABASE_URL}/rest/v1/purchase_orders?po_id=eq.{po_id}"
-    req_headers = {**HEADERS, "Prefer": "return=minimal"}
-    requests.patch(url, headers=req_headers, json={"status": status})
-    st.rerun()
-
-def delete_purchase_order(po_id, rep_order_id):
-    # 1. Delete the generated Purchase Order
-    url_po = f"{SUPABASE_URL}/rest/v1/purchase_orders?po_id=eq.{po_id}"
-    requests.delete(url_po, headers=HEADERS)
-    
-    # 2. Revert the parent ML recommendation status to cancelled
-    if rep_order_id:
-        url_rep = f"{SUPABASE_URL}/rest/v1/{TABLE_REPLENISHMENT}?order_id=eq.{rep_order_id}"
-        req_headers = {**HEADERS, "Prefer": "return=minimal"}
-        requests.patch(url_rep, headers=req_headers, json={"status": "CANCELLED"})
-        
-    st.toast("Order successfully canceled!", icon="🛑")
-    st.rerun()
-
-def save_supplier(supplier_id, name, email, phone):
-    url = f"{SUPABASE_URL}/rest/v1/suppliers"
-    req_headers = {**HEADERS, "Prefer": "return=resolution"}
-    data = {"supplier_id": supplier_id, "supplier_name": name, "email": email, "contact_number": phone}
-    resp = requests.post(url, headers=HEADERS, json=data)
-    if resp.status_code == 409: # Conflict, so update
-        requests.patch(f"{url}?supplier_id=eq.{supplier_id}", headers=req_headers, json=data)
-    st.toast("Supplier saved successfully!", icon="✅")
-    st.rerun()
-
-def delete_supplier(supplier_id):
-    url = f"{SUPABASE_URL}/rest/v1/suppliers?supplier_id=eq.{supplier_id}"
-    requests.delete(url, headers=HEADERS)
-    st.toast("Supplier removed!", icon="🗑️")
-    st.rerun()
 
 # --- UI Renderer ---
 def render_stock_replenishment():
@@ -174,7 +55,31 @@ def render_stock_replenishment():
         catalog_map = fetch_products()
         suppliers = fetch_suppliers()
         pos = fetch_purchase_orders()
+        forecast_dates = fetch_forecast_dates()
         default_supplier_id = suppliers[0]['supplier_id'] if suppliers else None
+
+    if not forecast_dates:
+        st.warning("No demand forecasts found. Generate forecasts before using Stock Replenishment.")
+        return
+
+    selected_forecast_date = st.date_input(
+        "Forecast Date",
+        value=pd.to_datetime(forecast_dates[0]).date(),
+        help="Stock replenishment suggestions are computed from demand_forecasts for the selected date.",
+    )
+
+    with st.expander("📣 Promotion Uplift Planner", expanded=False):
+        st.caption("Use this when live POS is delayed. It increases forecast demand using expected campaign response.")
+        p1, p2, p3 = st.columns(3)
+        enable_promo_uplift = p1.checkbox("Apply promotion uplift", value=True)
+        promo_buy_probability = p2.slider("Buy probability", min_value=0.0, max_value=1.0, value=0.25, step=0.05)
+        promo_reach_ratio = p3.slider("Campaign reach", min_value=0.0, max_value=1.0, value=0.50, step=0.05)
+        safety_buffer_pct = st.slider("Safety buffer %", min_value=0, max_value=60, value=15, step=5)
+
+    promo_multiplier = (promo_buy_probability * promo_reach_ratio) if enable_promo_uplift else 0.0
+
+    # No longer needed since we're reading directly from demand_forecasts
+    # forecast_map = fetch_forecasts_for_date(...)
 
     # Inline fallback panel for older Streamlit versions without st.dialog.
     pending_override = st.session_state.get("pending_override")
@@ -196,7 +101,7 @@ def render_stock_replenishment():
             st.rerun()
         if rc2.button("Confirm Override", type="primary", use_container_width=True):
             if not reason.strip():
-                st.error("Please provide a reason to continue.")
+                st.error("Please provide a reason before confirming.")
             else:
                 _commit_override(
                     pending_override["order_id"],
@@ -204,27 +109,16 @@ def render_stock_replenishment():
                     pending_override["predicted"],
                     pending_override["ordered"],
                     pending_override["supplier_id"],
-                    reason,
+                    reason.strip(),
+                    pending_override.get("order_context", {}),
                 )
 
-    import hashlib
-    def get_fallback_name(sku):
-        items = ["Organic Greek Yogurt", "Fresh Almond Milk", "Premium Whole Wheat Bread", "Cheddar Cheese Block", 
-                 "Extra Virgin Olive Oil", "Himalayan Pink Salt", "Roasted Arabica Coffee", "Green Tea Bags",
-                 "Free Range Eggs (Dozen)", "Sweet Red Apples", "Avocados", "Spaghetti Pasta 500g", 
-                 "Tomato Basil Sauce", "Natural Peanut Butter", "Rolled Oats 1kg", "Wild Caught Salmon", 
-                 "Chicken Breast Fillets", "Basmati Rice 5kg", "Frozen Mixed Berries", "Dark Chocolate 70%",
-                 "Raw Honey 500g", "Mineral Water", "Roasted Almonds 200g", "Axe Body Spray", "Colgate Toothpaste",
-                 "Nescafe Gold Blend", "Tropicana Orange Juice", "Lays Classic Potato Chips", "Oreo Cookies",
-                 "Nutella Hazelnut Spread", "Gillette Mach3 Razor", "Head & Shoulders Shampoo"]
-        idx = int(hashlib.md5(sku.encode()).hexdigest()[:6], 16) % len(items)
-        return items[idx]
-
     # Main Tabs
-    tab_dash, tab_po, tab_sup, tab_shrink = st.tabs([
+    tab_dash, tab_po, tab_sup, tab_supplier_dash, tab_shrink = st.tabs([
         "📊 ML Dashboard & Approvals",
         "📦 Purchase Orders (Auto-POs)",
         "🏢 Supplier Directory",
+        "📨 Supplier Dashboard",
         "📉 Shrinkage Analysis",
     ])
 
@@ -233,18 +127,95 @@ def render_stock_replenishment():
     # ─────────────────────────────────────────────────────────────────
     with tab_dash:
         if not orders:
-            st.info("No replenishment orders found. Run ML pipeline.")
+            st.info("No forecast rows found for replenishment planning.")
             return
 
-    for o in orders:
-       if o.get("product_name") in ["UNKNOWN PRODUCT", None, ""]:
-        code = o.get("product_code", "UNKNOWN")
-        # Try the actual product_catalog mapping first, then gracefully degrade to the consistent mock name
-        o["product_name"] = catalog_map.get(code, get_fallback_name(code))
+        selected_date_text = str(selected_forecast_date)
+        
+        # DEBUG: Show selected date and available data
+        with st.expander("🔍 Debug Info", expanded=False):
+            st.write(f"Selected date: {selected_date_text}")
+            st.write(f"Total forecast rows: {len(orders)}")
+            st.write(f"Catalog products: {len(catalog_map)}")
+            
+            # Check what product codes are in today's forecast
+            today_forecasts = [o for o in orders if str(o.get("forecast_date")) == selected_date_text]
+            st.write(f"Forecasts for {selected_date_text}: {len(today_forecasts)} rows")
+            if today_forecasts:
+                codes_in_forecast = [o.get("product_code") for o in today_forecasts]
+                codes_in_catalog = [c for c in codes_in_forecast if c in catalog_map]
+                st.write(f"  - In forecast: {codes_in_forecast}")
+                st.write(f"  - In catalog: {codes_in_catalog}")
+        
+        candidate_order_ids = []
+        for o in orders:
+            code = o.get("product_code", "UNKNOWN")
+            fdate = o.get("forecast_date")
+            if code in catalog_map and str(fdate) == selected_date_text:
+                candidate_order_ids.append(o.get("forecast_id") or f"{code}-{fdate}")
 
-        pending_orders = [o for o in orders if o.get("status") == "PENDING_APPROVAL"]
-        approved_orders = [o for o in orders if o.get("status") == "APPROVED"]
-        rejected_orders = [o for o in orders if o.get("status") == "REJECTED"]
+        repl_status_map = fetch_replenishment_status(candidate_order_ids)
+
+        filtered_orders = []
+        for o in orders:
+            code = o.get("product_code", "UNKNOWN")
+            fdate = o.get("forecast_date")
+
+            if code not in catalog_map:
+                continue
+            if str(fdate) != selected_date_text:
+                continue
+
+            order_id = o.get("forecast_id") or f"{code}-{fdate}"
+            existing = repl_status_map.get(order_id) or {}
+            current_status = existing.get("status", "PENDING_APPROVAL")
+
+            o["order_id"] = order_id
+            o["product_name"] = catalog_map.get(code, f"Unknown ({code})")
+
+            predicted_qty = max(1, int(round(float(o.get("predicted_demand", 1)))))
+            promo_uplift_qty = int(round(predicted_qty * promo_multiplier))
+            adjusted_demand = predicted_qty + promo_uplift_qty
+            demand_with_buffer = int(math.ceil(adjusted_demand * (1 + (safety_buffer_pct / 100.0))))
+
+            planning_stock = 1
+            o["current_stock_level"] = planning_stock
+
+            needed_qty = max(0, demand_with_buffer - planning_stock)
+            if needed_qty <= 0:
+                continue
+
+            o["suggested_qty"] = int(existing.get("suggested_qty") or needed_qty)
+            o["reorder_point"] = 1
+            o["status"] = current_status
+            o["predicted_qty_base"] = predicted_qty
+
+            conf = o.get("confidence_level")
+            conf_txt = f"{float(conf) * 100:.1f}%" if conf is not None else "N/A"
+            model = o.get("model_version") or "N/A"
+            o["reasoning"] = (
+                f"Forecast {predicted_qty} on {fdate} | Promo uplift +{promo_uplift_qty} | "
+                f"Safety buffer {safety_buffer_pct}% | model {model} | confidence {conf_txt}"
+            )
+            filtered_orders.append(o)
+
+        pending_orders = [o for o in filtered_orders if o.get("status") == "PENDING_APPROVAL"]
+        approved_orders = [o for o in filtered_orders if o.get("status") == "APPROVED"]
+        rejected_orders = [o for o in filtered_orders if o.get("status") == "REJECTED"]
+        
+        # DEBUG: Show filtering details
+        with st.expander("🔍 Filtering Details", expanded=False):
+            st.write(f"After catalog filter: {len(candidate_order_ids)} items (in both forecast & catalog for selected date)")
+            st.write(f"After needed_qty > 0 filter: {len(filtered_orders)} items")
+            st.write(f"  - Pending: {len(pending_orders)}")
+            st.write(f"  - Approved: {len(approved_orders)}")
+            st.write(f"  - Rejected: {len(rejected_orders)}")
+            
+            if not filtered_orders and candidate_order_ids:
+                st.warning("All items were filtered out! Check:")
+                st.write("- Is promo_multiplier set too high?")
+                st.write("- Is safety_buffer_pct too high?")
+                st.write("- Are all products showing needed_qty <= 0?")
         
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("Pending Approval", len(pending_orders))
@@ -268,7 +239,9 @@ def render_stock_replenishment():
 
             # Pre-compute supplier names
             sup_map = {s['supplier_name']: s['supplier_id'] for s in suppliers}
+            sup_id_to_name = {s['supplier_id']: s['supplier_name'] for s in suppliers}
             sup_list = list(sup_map.keys())
+            product_supplier_map = fetch_product_supplier_map()
 
             for o in urgent_list:
                 c1, c2, c3, c4, c5, c6, c7 = st.columns([2.5, 1, 1, 1, 1, 2, 1])
@@ -289,7 +262,18 @@ def render_stock_replenishment():
                         st.write(o.get('reasoning') or 'No reasoning')
                 
                 with c6:
-                    selected_sup_name = st.selectbox("Supplier", options=sup_list, key=f"sel_{o['order_id']}", label_visibility="collapsed")
+                    preferred_sid = product_supplier_map.get(o.get('product_code'))
+                    preferred_name = sup_id_to_name.get(preferred_sid)
+                    default_index = sup_list.index(preferred_name) if preferred_name in sup_list else 0
+                    selected_sup_name = st.selectbox(
+                        "Supplier",
+                        options=sup_list,
+                        index=default_index,
+                        key=f"sel_{o['order_id']}",
+                        label_visibility="collapsed",
+                    )
+                    if preferred_name:
+                        c6.caption(f"Auto-mapped: {preferred_name}")
                     selected_sup_id = sup_map.get(selected_sup_name)
 
                 with c7:
@@ -298,13 +282,24 @@ def render_stock_replenishment():
                         if not selected_sup_id:
                             st.warning("Please add a supplier first!")
                         else:
-                            # Anomaly Detection algorithm: >20% deviation OR >= 5 units absolute delta
-                            deviation_pct = abs(manual_qty - predicted_qty) / max(predicted_qty, 1)
-                            if deviation_pct > 0.20 or abs(manual_qty - predicted_qty) >= 5:
-                                override_confirmation_dialog(o['order_id'], o.get('product_code'), predicted_qty, manual_qty, selected_sup_id)
-                            else:
-                                update_order_status(o['order_id'], 'APPROVED', selected_sup_id, final_qty=manual_qty)
-                                st.rerun()
+                            override_confirmation_dialog(
+                                o['order_id'],
+                                o.get('product_code'),
+                                predicted_qty,
+                                manual_qty,
+                                selected_sup_id,
+                                {
+                                    "order_id": o.get("order_id"),
+                                    "product_code": o.get("product_code"),
+                                    "product_name": o.get("product_name"),
+                                    "current_stock_level": o.get("current_stock_level"),
+                                    "reorder_point": o.get("reorder_point"),
+                                    "estimated_order_value_kwd": o.get("estimated_order_value_kwd"),
+                                    "daily_sales_velocity": o.get("daily_sales_velocity"),
+                                    "forecast_7day_demand": o.get("predicted_qty_base"),
+                                    "reasoning": o.get("reasoning"),
+                                },
+                            )
                     if b2.button("❌", key=f"rej_{o['order_id']}", help="Reject"):
                         update_order_status(o['order_id'], 'REJECTED')
                         st.rerun()
@@ -317,8 +312,26 @@ def render_stock_replenishment():
                 "Product": o['product_name'], "SKU": o['product_code'],
                 "Stock": o['current_stock_level'], "Qty": o['suggested_qty'],
                 "Status": o['status']
-            } for o in orders])
+            } for o in filtered_orders])
             st.dataframe(all_df, use_container_width=True)
+
+        with st.expander("🔐 Approval Audit Log", expanded=False):
+            logs = fetch_approval_logs(limit=100)
+            if not logs:
+                st.info("No approval records yet.")
+            else:
+                log_df = pd.DataFrame(logs)
+                log_df = log_df.rename(columns={
+                    "order_id": "Order ID",
+                    "product_code": "SKU",
+                    "predicted_quantity": "Predicted Qty",
+                    "ordered_quantity": "Ordered Qty",
+                    "anomaly_flag": "Changed Qty",
+                    "override_reason": "Reason",
+                    "overridden_by": "Approved By",
+                    "overridden_at": "Approved At",
+                })
+                st.dataframe(log_df, use_container_width=True)
 
 
     # ─────────────────────────────────────────────────────────────────
@@ -326,6 +339,16 @@ def render_stock_replenishment():
     # ─────────────────────────────────────────────────────────────────
     with tab_po:
         st.markdown("#### 📦 Generated Purchase Orders")
+        send_test_mode = st.toggle(
+            "Test mode (send to .env test email)",
+            value=False,
+            help="On: send to .env test recipient. Off: send to supplier email saved in database.",
+            key="po_send_test_mode",
+        )
+        if send_test_mode:
+            st.caption("Email target: test recipient from .env")
+        else:
+            st.caption("Email target: supplier email from database")
         if not pos:
             st.info("No purchase orders have been automatically generated yet. Approve an ML recommendation first.")
         else:
@@ -344,34 +367,61 @@ def render_stock_replenishment():
                     poc1.markdown(f"**{po_display_id}**")
                     
                     sup_name = p.get('suppliers', {}).get('supplier_name', 'Unknown') if p.get('suppliers') else 'Unknown'
+                    sup_email = p.get('suppliers', {}).get('email', '') if p.get('suppliers') else ''
                     poc2.write(f"{sup_name}")
                     
                     # New: Product Details extracted from the join
                     rep = p.get('replenishment_orders') or {}
                     p_code = rep.get('product_code', 'UNKNOWN')
                     qty = rep.get('suggested_qty', 0)
-                    p_name = catalog_map.get(p_code, get_fallback_name(p_code))
+                    p_name = catalog_map.get(p_code, f"Unknown Product ({p_code})")
                     poc3.markdown(f"**{p_name}**<br/><small>{qty} units</small>", unsafe_allow_html=True)
                     
                     status = p.get('status')
                     if status == 'PENDING_DISPATCH':
                         poc4.markdown('<span class="badge bg-pending">Pending Dispatch</span>', unsafe_allow_html=True)
                     elif status == 'SENT':
-                        poc4.markdown('<span class="badge bg-approved">Sent to Supplier</span>', unsafe_allow_html=True)
+                        poc4.markdown('<span class="badge bg-approved">Email Sent</span>', unsafe_allow_html=True)
+                    elif status == 'IN_TRANSIT':
+                        poc4.markdown('<span class="badge" style="background:#dbeafe;color:#1e3a8a;">Sent to Delivery</span>', unsafe_allow_html=True)
                     else:
                         poc4.markdown('<span class="badge" style="background:#dbeafe;color:#1e3a8a;">Delivered</span>', unsafe_allow_html=True)
                         
                     with poc5:
                         if status == 'PENDING_DISPATCH':
+                            default_eta = datetime.now().date() + timedelta(days=1)
+                            max_eta = datetime.now().date() + timedelta(days=90)
+                            eta = st.date_input(
+                                "Expected Delivery",
+                                value=default_eta,
+                                min_value=datetime.now().date(),
+                                max_value=max_eta,
+                                key=f"eta_{p['po_id']}",
+                                help="Select a delivery date between today and next 90 days.",
+                            )
+                            notes = st.text_input(
+                                "Notes",
+                                key=f"po_note_{p['po_id']}",
+                                placeholder="Optional note",
+                            )
                             bc1, bc2 = st.columns(2)
-                            if bc1.button("Send ✉️", key=f"send_{p['po_id']}", use_container_width=True, help="Mark as Sent to Supplier"):
-                                update_po_status(p['po_id'], 'SENT')
+                            button_label = "Send Email ✉️" if send_test_mode else "Send to Supplier ✉️"
+                            if bc1.button(button_label, key=f"send_{p['po_id']}", use_container_width=True):
+                                today = datetime.now().date()
+                                if eta < today:
+                                    st.error("Expected delivery date cannot be in the past.")
+                                elif eta > (today + timedelta(days=90)):
+                                    st.error("Expected delivery date must be within 90 days.")
+                                else:
+                                    if send_po_email(p, catalog_map, eta, notes=notes, test_mode=send_test_mode):
+                                        st.rerun()
                             if bc2.button("Cancel 🗑️", type="primary", key=f"del_{p['po_id']}", use_container_width=True, help="Permanently Delete Order"):
                                 delete_purchase_order(p['po_id'], p.get('replenishment_order_id'))
                         elif status == 'SENT':
+                            st.caption("Waiting supplier to mark Sent to Delivery")
+                        elif status == 'IN_TRANSIT':
                             if st.button("Mark Delivered 📥", key=f"deliv_{p['po_id']}", use_container_width=True):
                                 update_po_status(p['po_id'], 'DELIVERED')
-
 
     # ─────────────────────────────────────────────────────────────────
     # TAB 3: Supplier Directory
@@ -409,7 +459,124 @@ def render_stock_replenishment():
             st.info("No suppliers exist in the database.")
 
     # ─────────────────────────────────────────────────────────────────
-    # TAB 4: Shrinkage Analysis (Inventory Intake Dashboard)
+    # TAB 4: Supplier Dashboard (View Received POs)
+    # ─────────────────────────────────────────────────────────────────
+    with tab_supplier_dash:
+        st.markdown("#### 📨 Supplier Order Portal")
+        st.caption("Suppliers can track orders and mark them as Sent to Delivery.")
+        
+        # Fetch PO logs
+        try:
+            url_logs = f"{SUPABASE_URL}/rest/v1/supplier_po_logs?select=*,suppliers(supplier_name),purchase_orders(status)&order=email_sent_at.desc&limit=500"
+            resp = requests.get(url_logs, headers=HEADERS)
+            po_logs = resp.json() if resp.status_code == 200 else []
+        except:
+            po_logs = []
+        
+        if not po_logs:
+            st.info("No purchase orders have been sent to suppliers yet.")
+        else:
+            # Filter options
+            col_filter1, col_filter2 = st.columns(2)
+            
+            with col_filter1:
+                # Get unique suppliers from logs
+                unique_suppliers = sorted(
+                    set((log.get('suppliers') or {}).get('supplier_name', 'Unknown') for log in po_logs)
+                )
+                filter_supplier = st.multiselect(
+                    "Filter by Supplier",
+                    options=unique_suppliers,
+                    default=None if len(unique_suppliers) > 3 else unique_suppliers
+                )
+            
+            with col_filter2:
+                date_range = st.date_input(
+                    "Filter by Date Range",
+                    value=(datetime.now().date() - timedelta(days=30), datetime.now().date()),
+                    format="YYYY-MM-DD"
+                )
+            
+            # Apply filters
+            filtered_logs = po_logs
+            if filter_supplier:
+                filtered_logs = [
+                    log for log in filtered_logs
+                    if (log.get('suppliers') or {}).get('supplier_name', 'Unknown') in filter_supplier
+                ]
+            
+            if len(date_range) == 2:
+                filtered_logs = [
+                    log for log in filtered_logs
+                    if datetime.fromisoformat(log.get('email_sent_at', '')).date() >= date_range[0]
+                    and datetime.fromisoformat(log.get('email_sent_at', '')).date() <= date_range[1]
+                ]
+            
+            # Display logs as table
+            st.markdown("##### Sent Purchase Orders")
+            
+            if filtered_logs:
+                df_logs = pd.DataFrame([
+                    {
+                        "PO ID": str(log.get('po_id', ''))[:8].upper(),
+                        "Supplier": (log.get('suppliers') or {}).get('supplier_name', 'Unknown'),
+                        "Product Code": log.get('product_code', 'N/A'),
+                        "Quantity": log.get('quantity', 0),
+                        "Expected Delivery": log.get('expected_delivery_date', 'N/A'),
+                        "Notes": log.get('notes', '') or '-',
+                        "Sent To": log.get('email_address', 'N/A'),
+                        "Sent By": log.get('sent_by', 'Unknown'),
+                        "Sent At": datetime.fromisoformat(log.get('email_sent_at', '')).strftime('%Y-%m-%d %H:%M') if log.get('email_sent_at') else 'N/A',
+                        "Status": (log.get('purchase_orders') or {}).get('status', 'SENT')
+                    }
+                    for log in filtered_logs
+                ])
+                
+                st.dataframe(df_logs, use_container_width=True, hide_index=True)
+                
+                # Summary metrics
+                st.markdown("---")
+                st.markdown("##### Summary")
+                
+                met_col1, met_col2, met_col3, met_col4 = st.columns(4)
+                met_col1.metric("Total POs Sent", len(filtered_logs))
+                met_col2.metric("Total Units", sum(log.get('quantity', 0) for log in filtered_logs))
+                met_col3.metric("In Transit", sum(1 for log in filtered_logs if (log.get('purchase_orders') or {}).get('status') == 'IN_TRANSIT'))
+                met_col4.metric("Delivered", sum(1 for log in filtered_logs if (log.get('purchase_orders') or {}).get('status') == 'DELIVERED'))
+                
+                # Expandable details
+                st.markdown("---")
+                for idx, log in enumerate(filtered_logs[:10]):  # Show top 10
+                    with st.expander(f"📋 PO {str(log.get('po_id', ''))[:8].upper()} - {log.get('product_code', 'N/A')}"):
+                        detail_col1, detail_col2 = st.columns(2)
+                        po_status = (log.get('purchase_orders') or {}).get('status', 'SENT')
+                        
+                        with detail_col1:
+                            st.write(f"**Supplier:** {(log.get('suppliers') or {}).get('supplier_name', 'Unknown')}")
+                            st.write(f"**Supplier Email:** {log.get('email_address', 'N/A')}")
+                            st.write(f"**Quantity:** {log.get('quantity', 0)} units")
+                            st.write(f"**Expected Delivery:** {log.get('expected_delivery_date', 'N/A')}")
+                        
+                        with detail_col2:
+                            st.write(f"**Sent By:** {log.get('sent_by', 'Unknown')}")
+                            st.write(f"**Sent At:** {datetime.fromisoformat(log.get('email_sent_at', '')).strftime('%Y-%m-%d %H:%M:%S') if log.get('email_sent_at') else 'N/A'}")
+                            st.write(f"**Tracking Status:** {po_status}")
+
+                        if po_status == 'SENT':
+                            if st.button("Sent to Delivery 🚚", key=f"ship_{log.get('log_id')}", use_container_width=True):
+                                if update_po_status(log.get('po_id'), 'IN_TRANSIT', do_rerun=False):
+                                    st.success("Marked as Sent to Delivery.")
+                                    st.rerun()
+                        
+                        if log.get('notes'):
+                            st.write(f"**Notes:** {log.get('notes', 'N/A')}")
+                        else:
+                            st.write("**Notes:** -")
+            else:
+                st.info("No purchase orders match the selected filters.")
+
+    # ─────────────────────────────────────────────────────────────────
+    # TAB 5: Shrinkage Analysis (Inventory Intake Dashboard)
     # ─────────────────────────────────────────────────────────────────
     with tab_shrink:
         st.markdown("#### 📉 Shrinkage Analysis")
@@ -421,3 +588,6 @@ def render_stock_replenishment():
             render_shrinkage_analytics_only()
         except Exception as exc:
             st.error(f"Unable to load Inventory Intake dashboard: {exc}")
+
+    # Direct-send flow is used in Purchase Orders tab; preview modal removed.
+

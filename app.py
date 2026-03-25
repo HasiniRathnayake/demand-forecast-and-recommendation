@@ -157,6 +157,23 @@ elif page == "customer_dashboard":
     from pages.customer_dashboard import show_customer_dashboard
     show_customer_dashboard(user.get('customer_id'))
 
+elif page == "supplier_dashboard":
+    from ui.styles import inject_styles
+    from services.auth_service import get_current_user, logout
+    inject_styles()
+
+    user = get_current_user()
+    if not user or user.get('role') not in ('supplier', 'admin'):
+        st.session_state.current_page = "main_dashboard"
+        st.rerun()
+
+    if st.button("← Back", key="back_supplier"):
+        st.session_state.current_page = "main_dashboard"
+        st.rerun()
+
+    from pages.supplier_dashboard import render_supplier_dashboard
+    render_supplier_dashboard()
+
 elif page == "customer_settings":
     from ui.styles import inject_styles
     from services.auth_service import get_current_user
