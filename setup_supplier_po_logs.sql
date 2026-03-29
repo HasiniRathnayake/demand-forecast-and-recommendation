@@ -28,5 +28,6 @@ ON public.supplier_po_logs(supplier_id);
 CREATE INDEX IF NOT EXISTS idx_supplier_po_logs_po_id 
 ON public.supplier_po_logs(po_id);
 
+
 CREATE INDEX IF NOT EXISTS idx_supplier_po_logs_email_sent 
 ON public.supplier_po_logs(email_sent);
