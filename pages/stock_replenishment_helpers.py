@@ -144,6 +144,29 @@ def fetch_product_supplier_map():
     return product_supplier
 
 
+def fetch_supplier_product_map():
+    """Return supplier_id -> [product_code] from supplier_product_map table."""
+    url = (
+        f"{SUPABASE_URL}/rest/v1/supplier_product_map"
+        f"?select=supplier_id,product_code"
+        f"&order=supplier_id.asc"
+    )
+    resp = requests.get(url, headers=HEADERS)
+    if resp.status_code != 200:
+        return {}
+
+    mapping = {}
+    for row in resp.json() or []:
+        sid = row.get("supplier_id")
+        pcode = row.get("product_code")
+        if not sid or not pcode:
+            continue
+        if sid not in mapping:
+            mapping[sid] = []
+        mapping[sid].append(pcode)
+    return mapping
+
+
 def fetch_approval_logs(limit=100):
     url = (
         f"{SUPABASE_URL}/rest/v1/override_logs"
@@ -216,7 +239,37 @@ def ensure_replenishment_row(order_context, predicted_qty):
     return resp.status_code in [200, 201, 204]
 
 
-def update_order_status(order_id, status, supplier_id=None, final_qty=None):
+def purchase_order_exists(order_id):
+    url = (
+        f"{SUPABASE_URL}/rest/v1/purchase_orders"
+        f"?select=po_id&replenishment_order_id=eq.{order_id}&limit=1"
+    )
+    resp = requests.get(url, headers=HEADERS)
+    if resp.status_code != 200:
+        return False
+    data = resp.json() or []
+    return len(data) > 0
+
+
+def approval_log_exists(order_id):
+    url = (
+        f"{SUPABASE_URL}/rest/v1/override_logs"
+        f"?select=log_id&order_id=eq.{order_id}&limit=1"
+    )
+    resp = requests.get(url, headers=HEADERS)
+    if resp.status_code != 200:
+        return False
+    data = resp.json() or []
+    return len(data) > 0
+
+
+def update_order_status(order_id, status, supplier_id=None, final_qty=None, order_context=None, predicted_qty=None):
+    if status == "APPROVED" and order_context:
+        ensured = ensure_replenishment_row(order_context, predicted_qty if predicted_qty is not None else final_qty)
+        if not ensured:
+            st.error("Failed to stage order record for approval.")
+            return False
+
     url = f"{SUPABASE_URL}/rest/v1/{TABLE_REPLENISHMENT}?order_id=eq.{order_id}"
     req_headers = {**HEADERS, "Prefer": "return=minimal"}
 
@@ -228,15 +281,21 @@ def update_order_status(order_id, status, supplier_id=None, final_qty=None):
 
     if resp.status_code in [200, 204]:
         if status == "APPROVED" and supplier_id:
-            po_url = f"{SUPABASE_URL}/rest/v1/purchase_orders"
-            po_resp = requests.post(po_url, headers=req_headers, json={
-                "replenishment_order_id": order_id,
-                "supplier_id": supplier_id,
-                "status": "PENDING_DISPATCH"
-            })
-            if po_resp.status_code not in [200, 201]:
-                st.error(f"Failed to create purchase order ({po_resp.status_code}).")
-                return False
+            if not purchase_order_exists(order_id):
+                po_url = f"{SUPABASE_URL}/rest/v1/purchase_orders"
+                po_resp = requests.post(po_url, headers=req_headers, json={
+                    "replenishment_order_id": order_id,
+                    "supplier_id": supplier_id,
+                    "status": "PENDING_DISPATCH"
+                })
+                if po_resp.status_code not in [200, 201, 204]:
+                    # Treat duplicate insert race as success if PO now exists.
+                    if po_resp.status_code == 409 and purchase_order_exists(order_id):
+                        pass
+                    else:
+                        detail = po_resp.text.strip()
+                        st.error(f"Failed to create purchase order ({po_resp.status_code}). {detail}")
+                        return False
         st.toast(f"Order {order_id} marked as {status}!", icon="✅")
         return True
 
@@ -246,7 +305,7 @@ def update_order_status(order_id, status, supplier_id=None, final_qty=None):
 
 def save_override_log(order_id, code, predicted, ordered, reason, anomaly_flag):
     url = f"{SUPABASE_URL}/rest/v1/override_logs"
-    resp = requests.post(url, headers=HEADERS, json={
+    payload = {
         "order_id": order_id,
         "product_code": code,
         "predicted_quantity": int(predicted),
@@ -254,9 +313,19 @@ def save_override_log(order_id, code, predicted, ordered, reason, anomaly_flag):
         "anomaly_flag": bool(anomaly_flag),
         "override_reason": reason,
         "overridden_by": _actor_identity()
-    })
+    }
+    resp = requests.post(url, headers=HEADERS, json=payload)
     if resp.status_code not in [200, 201]:
-        st.error(f"Failed to save approval log. ({resp.status_code})")
+        # If order_id is unique in this environment, update existing row instead of failing.
+        if resp.status_code == 409 and approval_log_exists(order_id):
+            patch_url = f"{SUPABASE_URL}/rest/v1/override_logs?order_id=eq.{order_id}"
+            patch_headers = {**HEADERS, "Prefer": "return=minimal"}
+            patch_resp = requests.patch(patch_url, headers=patch_headers, json=payload)
+            if patch_resp.status_code in [200, 204]:
+                return True
+
+        detail = resp.text.strip()
+        st.error(f"Failed to save approval log. ({resp.status_code}) {detail}")
         return False
     return True
 
@@ -271,7 +340,14 @@ def _commit_override(order_id, code, predicted, ordered, supplier_id, reason, or
     if not save_override_log(order_id, code, predicted, ordered, reason, anomaly_flag):
         return
 
-    if update_order_status(order_id, "APPROVED", supplier_id, final_qty=ordered):
+    if update_order_status(
+        order_id,
+        "APPROVED",
+        supplier_id,
+        final_qty=ordered,
+        order_context=order_context,
+        predicted_qty=predicted,
+    ):
         st.session_state.pop("pending_override", None)
         st.session_state.pop("override_reason_inline", None)
         st.rerun()
@@ -302,6 +378,8 @@ def override_confirmation_dialog(order_id, code, predicted, ordered, supplier_id
         _override_confirmation_dialog(order_id, code, predicted, ordered, supplier_id, order_context)
         return
 
+    has_anomaly = int(predicted) != int(ordered)
+
     st.session_state["pending_override"] = {
         "order_id": order_id,
         "code": code,
@@ -309,6 +387,7 @@ def override_confirmation_dialog(order_id, code, predicted, ordered, supplier_id
         "ordered": ordered,
         "supplier_id": supplier_id,
         "order_context": order_context,
+        "has_anomaly": has_anomaly,
     }
     st.rerun()
 
@@ -429,15 +508,81 @@ def delete_purchase_order(po_id, rep_order_id):
     st.rerun()
 
 
-def save_supplier(supplier_id, name, email, phone):
+def get_next_supplier_id():
+    """Generate next supplier ID in SUP-XXX format."""
+    suppliers = fetch_suppliers()
+    if not suppliers:
+        return "SUP-001"
+    
+    max_num = 0
+    for sup in suppliers:
+        sid = sup.get("supplier_id", "")
+        if sid.startswith("SUP-"):
+            try:
+                num = int(sid.replace("SUP-", ""))
+                max_num = max(max_num, num)
+            except ValueError:
+                pass
+    
+    return f"SUP-{max_num + 1:03d}"
+
+
+def save_supplier(supplier_id, name, email, phone, selected_products=None):
     url = f"{SUPABASE_URL}/rest/v1/suppliers"
     req_headers = {**HEADERS, "Prefer": "return=resolution"}
     data = {"supplier_id": supplier_id, "supplier_name": name, "email": email, "contact_number": phone}
+
     resp = requests.post(url, headers=HEADERS, json=data)
+    created = resp.status_code in [200, 201, 204]
+
     if resp.status_code == 409:
-        requests.patch(f"{url}?supplier_id=eq.{supplier_id}", headers=req_headers, json=data)
-    st.toast("Supplier saved successfully!", icon="✅")
-    st.rerun()
+        patch_resp = requests.patch(f"{url}?supplier_id=eq.{supplier_id}", headers=req_headers, json=data)
+        if patch_resp.status_code not in [200, 204]:
+            detail = patch_resp.text.strip()
+            return False, f"Failed to update supplier ({patch_resp.status_code}). {detail}"
+    elif not created:
+        detail = resp.text.strip()
+        return False, f"Failed to save supplier ({resp.status_code}). {detail}"
+    
+    # Save supplier-product mappings when provided by the form.
+    if selected_products is not None:
+        map_ok, map_msg = _save_supplier_products(supplier_id, selected_products)
+        if not map_ok:
+            return False, map_msg
+
+    action = "created" if created else "updated"
+    mapped_count = len(selected_products or [])
+    return True, f"Supplier {supplier_id} {action} successfully. Products mapped: {mapped_count}."
+
+
+def _save_supplier_products(supplier_id, product_codes):
+    """Replace product mappings for a supplier in supplier_product_map."""
+    table_url = f"{SUPABASE_URL}/rest/v1/supplier_product_map"
+    req_headers = {**HEADERS, "Prefer": "return=minimal"}
+
+    # Replace existing mappings with the latest selection.
+    del_url = f"{table_url}?supplier_id=eq.{supplier_id}"
+    del_resp = requests.delete(del_url, headers=req_headers)
+    if del_resp.status_code not in [200, 204]:
+        detail = del_resp.text.strip()
+        return False, f"Failed to clear old product mappings ({del_resp.status_code}). {detail}"
+
+    if not product_codes:
+        return True, ""
+
+    payload = [
+        {"supplier_id": supplier_id, "product_code": str(code)}
+        for code in sorted({c for c in product_codes if c})
+    ]
+
+    post_url = f"{table_url}?on_conflict=supplier_id,product_code"
+    post_headers = {**HEADERS, "Prefer": "resolution=merge-duplicates,return=minimal"}
+    post_resp = requests.post(post_url, headers=post_headers, json=payload)
+    if post_resp.status_code not in [200, 201, 204]:
+        detail = post_resp.text.strip()
+        return False, f"Failed to save product mappings ({post_resp.status_code}). {detail}"
+
+    return True, ""
 
 
 def delete_supplier(supplier_id):
