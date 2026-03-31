@@ -357,6 +357,48 @@ elif page == "inventory_intake":
         unsafe_allow_html=True,
     )
 
+# ── Route: admin staff approvals ─────────────────────────────────────────────
+elif page == "admin_staff_approvals":
+    from ui.styles import inject_styles
+    from services.auth_service import get_current_user, get_user_role, logout
+    from pages.admin_staff_approvals import render_admin_staff_approvals
+
+    inject_styles()
+
+    if get_user_role() != "admin":
+        st.error("⛔ Access denied. Admin only.")
+        st.session_state.current_page = "main_dashboard"
+        st.rerun()
+
+    col_back, col_title, col_user = st.columns([1, 5, 1])
+    with col_back:
+        if st.button("← Hub", key="back_admin_approvals"):
+            st.session_state.current_page = "main_dashboard"
+            st.rerun()
+    with col_title:
+        st.markdown(
+            '<p class="main-header">🛡️ Admin Controls</p>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<p class="sub-header">Manage pending staff account approvals</p>',
+            unsafe_allow_html=True,
+        )
+    with col_user:
+        user = get_current_user()
+        if user:
+            st.caption(f"👤 {user.get('username','').capitalize()}")
+        if st.button("Logout", key="admin_approval_logout"):
+            logout()
+
+    st.markdown("---")
+    render_admin_staff_approvals()
+
+    st.markdown(
+        '<div class="footer">Sunrise Supermarket · Admin Staff Approvals · SLIIT</div>',
+        unsafe_allow_html=True,
+    )
+
 # ── Route: waste & performance monitor ───────────────────────────────────────
 elif page == "waste_monitor":
     from ui.styles            import inject_styles

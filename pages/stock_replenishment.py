@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import math
+import re
 from datetime import datetime, timezone, timedelta
 
 from config.settings import SUPABASE_URL, SUPABASE_KEY
@@ -10,16 +11,20 @@ from pages.stock_replenishment_helpers import (
     _commit_override,
     delete_purchase_order,
     delete_supplier,
+    ensure_replenishment_row,
     fetch_approval_logs,
     fetch_forecast_dates,
     fetch_orders,
     fetch_product_supplier_map,
+    fetch_supplier_product_map,
     fetch_products,
     fetch_purchase_orders,
     fetch_replenishment_status,
     fetch_suppliers,
+    get_next_supplier_id,
     override_confirmation_dialog,
     save_supplier,
+    save_override_log,
     send_po_email,
     update_order_status,
     update_po_status,
@@ -84,7 +89,11 @@ def render_stock_replenishment():
     # Inline fallback panel for older Streamlit versions without st.dialog.
     pending_override = st.session_state.get("pending_override")
     if pending_override and not hasattr(st, "dialog"):
-        st.warning("⚠️ Anomaly Detected: Quantity Override")
+        has_anomaly = bool(pending_override.get("has_anomaly", False))
+        if has_anomaly:
+            st.warning("⚠️ Anomaly Detected: Quantity Override")
+        else:
+            st.info("Confirm Order Approval")
         st.markdown(
             f"**Predicted:** {pending_override['predicted']} units — "
             f"**Requested:** {pending_override['ordered']} units"
@@ -114,11 +123,10 @@ def render_stock_replenishment():
                 )
 
     # Main Tabs
-    tab_dash, tab_po, tab_sup, tab_supplier_dash, tab_shrink = st.tabs([
+    tab_dash, tab_po, tab_sup, tab_shrink = st.tabs([
         "📊 ML Dashboard & Approvals",
         "📦 Purchase Orders (Auto-POs)",
         "🏢 Supplier Directory",
-        "📨 Supplier Dashboard",
         "📉 Shrinkage Analysis",
     ])
 
@@ -240,8 +248,11 @@ def render_stock_replenishment():
             # Pre-compute supplier names
             sup_map = {s['supplier_name']: s['supplier_id'] for s in suppliers}
             sup_id_to_name = {s['supplier_id']: s['supplier_name'] for s in suppliers}
-            sup_list = list(sup_map.keys())
-            product_supplier_map = fetch_product_supplier_map()
+            supplier_product_map = fetch_supplier_product_map()
+            product_to_supplier_ids = {}
+            for sid, p_codes in supplier_product_map.items():
+                for p_code in p_codes:
+                    product_to_supplier_ids.setdefault(p_code, []).append(sid)
 
             for o in urgent_list:
                 c1, c2, c3, c4, c5, c6, c7 = st.columns([2.5, 1, 1, 1, 1, 2, 1])
@@ -262,19 +273,22 @@ def render_stock_replenishment():
                         st.write(o.get('reasoning') or 'No reasoning')
                 
                 with c6:
-                    preferred_sid = product_supplier_map.get(o.get('product_code'))
-                    preferred_name = sup_id_to_name.get(preferred_sid)
-                    default_index = sup_list.index(preferred_name) if preferred_name in sup_list else 0
-                    selected_sup_name = st.selectbox(
-                        "Supplier",
-                        options=sup_list,
-                        index=default_index,
-                        key=f"sel_{o['order_id']}",
-                        label_visibility="collapsed",
-                    )
-                    if preferred_name:
-                        c6.caption(f"Auto-mapped: {preferred_name}")
-                    selected_sup_id = sup_map.get(selected_sup_name)
+                    product_code = o.get('product_code')
+                    allowed_supplier_ids = product_to_supplier_ids.get(product_code, [])
+                    allowed_sup_names = [sup_id_to_name[sid] for sid in allowed_supplier_ids if sid in sup_id_to_name]
+
+                    if allowed_sup_names:
+                        selected_sup_name = st.selectbox(
+                            "Supplier",
+                            options=allowed_sup_names,
+                            key=f"sel_{o['order_id']}",
+                            label_visibility="collapsed",
+                        )
+                        selected_sup_id = sup_map.get(selected_sup_name)
+                    else:
+                        selected_sup_id = None
+                        c6.warning("No mapped supplier")
+                        c6.caption("Map suppliers in Supplier Directory.")
 
                 with c7:
                     b1, b2 = st.columns(2)
@@ -282,24 +296,53 @@ def render_stock_replenishment():
                         if not selected_sup_id:
                             st.warning("Please add a supplier first!")
                         else:
-                            override_confirmation_dialog(
-                                o['order_id'],
-                                o.get('product_code'),
-                                predicted_qty,
-                                manual_qty,
-                                selected_sup_id,
-                                {
-                                    "order_id": o.get("order_id"),
-                                    "product_code": o.get("product_code"),
-                                    "product_name": o.get("product_name"),
-                                    "current_stock_level": o.get("current_stock_level"),
-                                    "reorder_point": o.get("reorder_point"),
-                                    "estimated_order_value_kwd": o.get("estimated_order_value_kwd"),
-                                    "daily_sales_velocity": o.get("daily_sales_velocity"),
-                                    "forecast_7day_demand": o.get("predicted_qty_base"),
-                                    "reasoning": o.get("reasoning"),
-                                },
-                            )
+                            order_context = {
+                                "order_id": o.get("order_id"),
+                                "product_code": o.get("product_code"),
+                                "product_name": o.get("product_name"),
+                                "current_stock_level": o.get("current_stock_level"),
+                                "reorder_point": o.get("reorder_point"),
+                                "estimated_order_value_kwd": o.get("estimated_order_value_kwd"),
+                                "daily_sales_velocity": o.get("daily_sales_velocity"),
+                                "forecast_7day_demand": o.get("predicted_qty_base"),
+                                "reasoning": o.get("reasoning"),
+                            }
+
+                            if manual_qty == predicted_qty:
+                                staged = ensure_replenishment_row(order_context, predicted_qty)
+                                if not staged:
+                                    st.error("Approval halted because order staging failed.")
+                                    continue
+
+                                auto_reason = f"Predicted quantity ordered: {manual_qty} units (no override)."
+                                logged = save_override_log(
+                                    o['order_id'],
+                                    o.get('product_code'),
+                                    predicted_qty,
+                                    manual_qty,
+                                    auto_reason,
+                                    False,
+                                )
+                                if not logged:
+                                    st.error("Approval halted because audit log could not be saved.")
+                                elif update_order_status(
+                                    o['order_id'],
+                                    'APPROVED',
+                                    selected_sup_id,
+                                    final_qty=manual_qty,
+                                    order_context=order_context,
+                                    predicted_qty=predicted_qty,
+                                ):
+                                    st.rerun()
+                            else:
+                                override_confirmation_dialog(
+                                    o['order_id'],
+                                    o.get('product_code'),
+                                    predicted_qty,
+                                    manual_qty,
+                                    selected_sup_id,
+                                    order_context,
+                                )
                     if b2.button("❌", key=f"rej_{o['order_id']}", help="Reject"):
                         update_order_status(o['order_id'], 'REJECTED')
                         st.rerun()
@@ -341,7 +384,7 @@ def render_stock_replenishment():
         st.markdown("#### 📦 Generated Purchase Orders")
         send_test_mode = st.toggle(
             "Test mode (send to .env test email)",
-            value=False,
+            value=True,
             help="On: send to .env test recipient. Off: send to supplier email saved in database.",
             key="po_send_test_mode",
         )
@@ -428,153 +471,204 @@ def render_stock_replenishment():
     # ─────────────────────────────────────────────────────────────────
     with tab_sup:
         st.markdown("#### 🏢 Supplier Management")
-        
-        # Add new form
-        with st.expander("➕ Add / Update Supplier", expanded=False):
-            with st.form("supplier_form"):
+        saved_msg = st.session_state.pop("supplier_saved_msg", None)
+        if saved_msg:
+            st.success(saved_msg)
+        supplier_product_map = fetch_supplier_product_map()
+        edit_supplier_id = st.session_state.get("supplier_edit_id")
+        edit_supplier_name = st.session_state.get("supplier_edit_name", "")
+        edit_supplier_email = st.session_state.get("supplier_edit_email", "")
+        edit_supplier_phone = st.session_state.get("supplier_edit_phone", "")
+        edit_supplier_product_codes = st.session_state.get("supplier_edit_product_codes", [])
+
+        def render_supplier_form(
+            form_key: str,
+            form_supplier_id: str,
+            default_name: str,
+            default_email: str,
+            default_phone: str,
+            default_product_codes: list[str],
+            is_edit_mode: bool,
+        ):
+            with st.form(form_key, clear_on_submit=not is_edit_mode):
+                mode_label = "Update Supplier" if is_edit_mode else "Create Supplier"
+                st.info(f"✅ {mode_label} ID: **{form_supplier_id}**")
+
+                key_suffix = form_supplier_id.replace("/", "_").replace(" ", "_")
                 sc1, sc2 = st.columns(2)
-                s_id = sc1.text_input("Supplier ID (e.g. SUP-005)", max_chars=20)
-                s_name = sc2.text_input("Supplier Name")
-                s_email = sc1.text_input("Email Contact")
-                s_phone = sc2.text_input("Phone Number")
-                
-                if st.form_submit_button("Save Supplier", type="primary"):
-                    if s_id and s_name:
-                        save_supplier(s_id, s_name, s_email, s_phone)
+                s_name = sc1.text_input(
+                    "Supplier Name",
+                    value=default_name,
+                    placeholder="e.g. Sunrise Distributors",
+                    key=f"supplier_name_{key_suffix}_{form_key}",
+                )
+                s_email = sc2.text_input(
+                    "Email Contact",
+                    value=default_email,
+                    placeholder="orders@supplier.com",
+                    key=f"supplier_email_{key_suffix}_{form_key}",
+                )
+                s_phone = sc1.text_input(
+                    "Phone Number",
+                    value=default_phone,
+                    placeholder="+94 XXX XXXX XXX",
+                    key=f"supplier_phone_{key_suffix}_{form_key}",
+                )
+
+                form_errors = []
+                email_clean = (s_email or "").strip()
+                phone_clean = (s_phone or "").strip()
+
+                if email_clean:
+                    email_ok = re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email_clean) is not None
+                    if not email_ok:
+                        form_errors.append("Enter a valid email format (example: orders@supplier.com).")
+
+                if phone_clean:
+                    digits_only = "".join(ch for ch in phone_clean if ch.isdigit())
+                    phone_chars_ok = re.match(r"^[0-9+()\-\s]+$", phone_clean) is not None
+                    if not phone_chars_ok:
+                        form_errors.append("Phone can contain only numbers, spaces, +, -, and parentheses.")
+                    if len(digits_only) < 7 or len(digits_only) > 15:
+                        form_errors.append("Phone must contain 7 to 15 digits.")
+
+                if form_errors:
+                    for err in form_errors:
+                        st.error(err)
+
+                st.markdown("**📦 Products This Supplier Provides** (select all applicable)")
+                if catalog_map:
+                    code_to_name = {code: name for code, name in catalog_map.items()}
+                    product_options = sorted(code_to_name.values())
+                    default_product_names = sorted(
+                        [code_to_name[c] for c in default_product_codes if c in code_to_name]
+                    )
+                    selected_products_names = st.multiselect(
+                        "Select Products",
+                        options=product_options,
+                        default=default_product_names,
+                        label_visibility="collapsed",
+                        help="Choose which products this supplier can provide.",
+                        key=f"supplier_products_{key_suffix}_{form_key}",
+                    )
+                    selected_product_codes = [
+                        code for code, name in catalog_map.items()
+                        if name in selected_products_names
+                    ]
+                else:
+                    selected_product_codes = []
+                    st.warning("No products in catalog. Add products first.")
+
+                b1, b2 = st.columns(2)
+                save_clicked = b1.form_submit_button(
+                    "Update Supplier" if is_edit_mode else "Save Supplier",
+                    type="primary",
+                    use_container_width=True,
+                )
+                cancel_clicked = b2.form_submit_button(
+                    "Cancel Edit" if is_edit_mode else "Clear",
+                    use_container_width=True,
+                    disabled=not is_edit_mode,
+                )
+
+                if cancel_clicked:
+                    st.session_state.pop("supplier_edit_id", None)
+                    st.session_state.pop("supplier_edit_name", None)
+                    st.session_state.pop("supplier_edit_email", None)
+                    st.session_state.pop("supplier_edit_phone", None)
+                    st.session_state.pop("supplier_edit_product_codes", None)
+                    st.rerun()
+
+                if save_clicked:
+                    if s_name:
+                        if form_errors:
+                            st.error("Please fix form validation errors before saving.")
+                        else:
+                            ok, msg = save_supplier(
+                                form_supplier_id,
+                                s_name,
+                                email_clean,
+                                phone_clean,
+                                selected_products=selected_product_codes,
+                            )
+                            if ok:
+                                st.session_state["supplier_saved_msg"] = msg
+                                st.session_state.pop("supplier_edit_id", None)
+                                st.session_state.pop("supplier_edit_name", None)
+                                st.session_state.pop("supplier_edit_email", None)
+                                st.session_state.pop("supplier_edit_phone", None)
+                                st.session_state.pop("supplier_edit_product_codes", None)
+                                st.rerun()
+                            else:
+                                st.error(msg)
                     else:
-                        st.error("Supplier ID and Name are required!")
+                        st.error("Supplier Name is required!")
+        
+        # Add-only form remains at top; edit form appears inline below selected row.
+        with st.expander("➕ Add New Supplier", expanded=not bool(edit_supplier_id)):
+            render_supplier_form(
+                form_key="supplier_add_form",
+                form_supplier_id=get_next_supplier_id(),
+                default_name="",
+                default_email="",
+                default_phone="",
+                default_product_codes=[],
+                is_edit_mode=False,
+            )
 
         # Display Existing Suppliers
         if suppliers:
             st.markdown("##### Active Suppliers")
+            matched_edit_row = False
             for sup in suppliers:
                 sid = sup['supplier_id']
                 with st.container(border=True):
-                    sc1, sc2, sc3 = st.columns([3, 4, 1])
+                    sc1, sc2, sc3 = st.columns([3, 4, 2])
                     sc1.markdown(f"**{sup['supplier_name']}**<br/><small>{sid}</small>", unsafe_allow_html=True)
-                    sc2.write(f"📧 {sup.get('email') or 'N/A'}\n📞 {sup.get('contact_number') or 'N/A'}")
-                    if sc3.button("Delete", key=f"del_sup_{sid}", type="secondary"):
+                    product_codes = supplier_product_map.get(sid, [])
+                    product_names = sorted([catalog_map.get(code, code) for code in product_codes])
+                    products_text = "\n".join([f"- {name}" for name in product_names]) if product_names else "- None selected"
+                    sc2.write(
+                        f"📧 {sup.get('email') or 'N/A'}\n"
+                        f"📞 {sup.get('contact_number') or 'N/A'}\n"
+                        f"📦 Products ({len(product_names)}):\n{products_text}"
+                    )
+                    b_upd, b_del = sc3.columns(2)
+                    if b_upd.button("Update", key=f"upd_sup_{sid}", type="primary", use_container_width=True):
+                        st.session_state["supplier_edit_id"] = sid
+                        st.session_state["supplier_edit_name"] = sup.get("supplier_name") or ""
+                        st.session_state["supplier_edit_email"] = sup.get("email") or ""
+                        st.session_state["supplier_edit_phone"] = sup.get("contact_number") or ""
+                        st.session_state["supplier_edit_product_codes"] = product_codes
+                        st.rerun()
+                    if b_del.button("Delete", key=f"del_sup_{sid}", type="secondary", use_container_width=True):
                         delete_supplier(sid)
+
+                    if edit_supplier_id == sid:
+                        matched_edit_row = True
+                        st.markdown("###### ✏️ Edit Selected Supplier")
+                        render_supplier_form(
+                            form_key=f"supplier_edit_form_{sid}",
+                            form_supplier_id=sid,
+                            default_name=edit_supplier_name,
+                            default_email=edit_supplier_email,
+                            default_phone=edit_supplier_phone,
+                            default_product_codes=edit_supplier_product_codes,
+                            is_edit_mode=True,
+                        )
+
+            if edit_supplier_id and not matched_edit_row:
+                st.warning("Selected supplier no longer exists. Edit mode has been cleared.")
+                st.session_state.pop("supplier_edit_id", None)
+                st.session_state.pop("supplier_edit_name", None)
+                st.session_state.pop("supplier_edit_email", None)
+                st.session_state.pop("supplier_edit_phone", None)
+                st.session_state.pop("supplier_edit_product_codes", None)
+                st.rerun()
         else:
             st.info("No suppliers exist in the database.")
 
     # ─────────────────────────────────────────────────────────────────
-    # TAB 4: Supplier Dashboard (View Received POs)
-    # ─────────────────────────────────────────────────────────────────
-    with tab_supplier_dash:
-        st.markdown("#### 📨 Supplier Order Portal")
-        st.caption("Suppliers can track orders and mark them as Sent to Delivery.")
-        
-        # Fetch PO logs
-        try:
-            url_logs = f"{SUPABASE_URL}/rest/v1/supplier_po_logs?select=*,suppliers(supplier_name),purchase_orders(status)&order=email_sent_at.desc&limit=500"
-            resp = requests.get(url_logs, headers=HEADERS)
-            po_logs = resp.json() if resp.status_code == 200 else []
-        except:
-            po_logs = []
-        
-        if not po_logs:
-            st.info("No purchase orders have been sent to suppliers yet.")
-        else:
-            # Filter options
-            col_filter1, col_filter2 = st.columns(2)
-            
-            with col_filter1:
-                # Get unique suppliers from logs
-                unique_suppliers = sorted(
-                    set((log.get('suppliers') or {}).get('supplier_name', 'Unknown') for log in po_logs)
-                )
-                filter_supplier = st.multiselect(
-                    "Filter by Supplier",
-                    options=unique_suppliers,
-                    default=None if len(unique_suppliers) > 3 else unique_suppliers
-                )
-            
-            with col_filter2:
-                date_range = st.date_input(
-                    "Filter by Date Range",
-                    value=(datetime.now().date() - timedelta(days=30), datetime.now().date()),
-                    format="YYYY-MM-DD"
-                )
-            
-            # Apply filters
-            filtered_logs = po_logs
-            if filter_supplier:
-                filtered_logs = [
-                    log for log in filtered_logs
-                    if (log.get('suppliers') or {}).get('supplier_name', 'Unknown') in filter_supplier
-                ]
-            
-            if len(date_range) == 2:
-                filtered_logs = [
-                    log for log in filtered_logs
-                    if datetime.fromisoformat(log.get('email_sent_at', '')).date() >= date_range[0]
-                    and datetime.fromisoformat(log.get('email_sent_at', '')).date() <= date_range[1]
-                ]
-            
-            # Display logs as table
-            st.markdown("##### Sent Purchase Orders")
-            
-            if filtered_logs:
-                df_logs = pd.DataFrame([
-                    {
-                        "PO ID": str(log.get('po_id', ''))[:8].upper(),
-                        "Supplier": (log.get('suppliers') or {}).get('supplier_name', 'Unknown'),
-                        "Product Code": log.get('product_code', 'N/A'),
-                        "Quantity": log.get('quantity', 0),
-                        "Expected Delivery": log.get('expected_delivery_date', 'N/A'),
-                        "Notes": log.get('notes', '') or '-',
-                        "Sent To": log.get('email_address', 'N/A'),
-                        "Sent By": log.get('sent_by', 'Unknown'),
-                        "Sent At": datetime.fromisoformat(log.get('email_sent_at', '')).strftime('%Y-%m-%d %H:%M') if log.get('email_sent_at') else 'N/A',
-                        "Status": (log.get('purchase_orders') or {}).get('status', 'SENT')
-                    }
-                    for log in filtered_logs
-                ])
-                
-                st.dataframe(df_logs, use_container_width=True, hide_index=True)
-                
-                # Summary metrics
-                st.markdown("---")
-                st.markdown("##### Summary")
-                
-                met_col1, met_col2, met_col3, met_col4 = st.columns(4)
-                met_col1.metric("Total POs Sent", len(filtered_logs))
-                met_col2.metric("Total Units", sum(log.get('quantity', 0) for log in filtered_logs))
-                met_col3.metric("In Transit", sum(1 for log in filtered_logs if (log.get('purchase_orders') or {}).get('status') == 'IN_TRANSIT'))
-                met_col4.metric("Delivered", sum(1 for log in filtered_logs if (log.get('purchase_orders') or {}).get('status') == 'DELIVERED'))
-                
-                # Expandable details
-                st.markdown("---")
-                for idx, log in enumerate(filtered_logs[:10]):  # Show top 10
-                    with st.expander(f"📋 PO {str(log.get('po_id', ''))[:8].upper()} - {log.get('product_code', 'N/A')}"):
-                        detail_col1, detail_col2 = st.columns(2)
-                        po_status = (log.get('purchase_orders') or {}).get('status', 'SENT')
-                        
-                        with detail_col1:
-                            st.write(f"**Supplier:** {(log.get('suppliers') or {}).get('supplier_name', 'Unknown')}")
-                            st.write(f"**Supplier Email:** {log.get('email_address', 'N/A')}")
-                            st.write(f"**Quantity:** {log.get('quantity', 0)} units")
-                            st.write(f"**Expected Delivery:** {log.get('expected_delivery_date', 'N/A')}")
-                        
-                        with detail_col2:
-                            st.write(f"**Sent By:** {log.get('sent_by', 'Unknown')}")
-                            st.write(f"**Sent At:** {datetime.fromisoformat(log.get('email_sent_at', '')).strftime('%Y-%m-%d %H:%M:%S') if log.get('email_sent_at') else 'N/A'}")
-                            st.write(f"**Tracking Status:** {po_status}")
-
-                        if po_status == 'SENT':
-                            if st.button("Sent to Delivery 🚚", key=f"ship_{log.get('log_id')}", use_container_width=True):
-                                if update_po_status(log.get('po_id'), 'IN_TRANSIT', do_rerun=False):
-                                    st.success("Marked as Sent to Delivery.")
-                                    st.rerun()
-                        
-                        if log.get('notes'):
-                            st.write(f"**Notes:** {log.get('notes', 'N/A')}")
-                        else:
-                            st.write("**Notes:** -")
-            else:
-                st.info("No purchase orders match the selected filters.")
-
     # ─────────────────────────────────────────────────────────────────
     # TAB 5: Shrinkage Analysis (Inventory Intake Dashboard)
     # ─────────────────────────────────────────────────────────────────
