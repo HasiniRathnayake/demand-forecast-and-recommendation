@@ -125,6 +125,8 @@ def render_login_page() -> None:
                     "🏭 Supplier"
                 ),
             )
+            if reg_role == "staff":
+                st.caption("Staff accounts require admin approval before first login.")
             reg_supplier_id = ""
             if reg_role == "supplier":
                 reg_supplier_id = st.text_input(
@@ -216,7 +218,8 @@ def render_login_page() -> None:
                     )
                 if success:
                     st.success(message)
-                    st.info("✅ Account created! Switch to the Login tab to sign in.")
+                    if reg_role != "staff":
+                        st.info("✅ Account created! Switch to the Login tab to sign in.")
                 else:
                     st.markdown(
                         f'<div class="alert-info">{message}</div>',

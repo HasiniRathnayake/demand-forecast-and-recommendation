@@ -116,6 +116,18 @@ def render_main_dashboard() -> None:
             },
         ]
 
+        if role == "admin":
+            modules.append(
+                {
+                    "icon": "✅",
+                    "title": "Staff Approvals",
+                    "desc": "Review and approve new staff registrations before they can log in.",
+                    "page": "admin_staff_approvals",
+                    "color": "#0F766E",
+                    "ready": True,
+                }
+            )
+
         cols = st.columns(3)
         for i, mod in enumerate(modules):
             with cols[i % 3]:
