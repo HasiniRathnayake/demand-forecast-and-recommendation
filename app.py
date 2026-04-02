@@ -407,6 +407,7 @@ elif page == "waste_monitor":
     from pages.waste_records  import show_waste_records
     from pages.ai_performance import show_ai_performance_comparison, show_ai_performance_analytics
     from pages.savings_report import show_savings_report
+    from services.auth_service import logout
 
     inject_styles()
 
@@ -448,9 +449,7 @@ elif page == "waste_monitor":
             unsafe_allow_html=True,
         )
         if st.button("Logout", key="wpm_logout", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
+            logout()
 
     st.markdown("---")
 
