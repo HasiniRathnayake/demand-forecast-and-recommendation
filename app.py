@@ -1,3 +1,4 @@
+
 import streamlit as st
 
 from config.settings import APP_ICON
@@ -138,7 +139,6 @@ elif page == "demand_forecast":
         '<div class="footer">Sunrise Supermarket · Demand Forecasting · IT2021 AIML Project · SLIIT</div>',
         unsafe_allow_html=True,
     )
-
 # ── Route: customer dashboard ─────────────────────────────────────────────────
 elif page == "customer_dashboard":
     from ui.styles import inject_styles
@@ -245,7 +245,6 @@ elif page == "loyalty":
         'IT24100971 · SLIIT</div>',
         unsafe_allow_html=True,
     )
-
 # ── Route: short shipment detector ───────────────────────────────────────────
 elif page == "short_shipment":
     from ui.styles import inject_styles
