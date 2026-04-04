@@ -1,20 +1,13 @@
 # pages/customer_dashboard.py
 import streamlit as st
 import sys, os
-<<<<<<< HEAD
-=======
 import re
->>>>>>> origin/main
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.db_connection import DatabaseConnection
 from scripts.apriori_engine import AprioriEngine
 import pandas as pd
 import plotly.express as px
-<<<<<<< HEAD
-from datetime import date
-=======
 from datetime import date, datetime, timedelta
->>>>>>> origin/main
 
 # ── Segment config ────────────────────────────────────────────────────────────
 SEGMENT_COLORS = {
@@ -106,14 +99,6 @@ def _get_total_spent(customer_id):
 def _get_emails(customer_id):
     db = DatabaseConnection()
     return db.fetch_all("""
-<<<<<<< HEAD
-        SELECT subject, sent_date, delivery_status
-        FROM email_log
-        WHERE customer_id = %s
-        ORDER BY sent_date DESC
-        LIMIT 10
-    """, [customer_id])
-=======
         SELECT subject, sent_date, email_content
         FROM email_log
         WHERE customer_id = %s AND delivery_status = 'sent'
@@ -219,7 +204,6 @@ def _get_active_promotions(email_rows) -> list[dict]:
         })
 
     return promotions
->>>>>>> origin/main
 
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -252,32 +236,22 @@ def show_customer_dashboard(customer_id):
         st.info("Please contact Sunrise Super staff to link your account.")
         return
 # ── Refresh button ────────────────────────────────────
-<<<<<<< HEAD
-    col_refresh, col_space = st.columns([1, 5])
-=======
     col_refresh, col_settings, col_space = st.columns([1, 1, 4])
->>>>>>> origin/main
     with col_refresh:
         if st.button("🔄 Refresh", key="refresh_dashboard"):
             st.cache_data.clear()
             st.rerun()
-<<<<<<< HEAD
-=======
     with col_settings:
         if st.button("⚙️ Settings", key="customer_settings"):
             st.session_state.current_page = "customer_settings"
             st.rerun()
->>>>>>> origin/main
 
     # Load all data in parallel (all cached)
     profile         = _get_profile(customer_id)
     purchases       = _get_purchases(customer_id)
     total_rev       = _get_total_spent(customer_id)
     emails          = _get_emails(customer_id)
-<<<<<<< HEAD
-=======
     active_promos   = _get_active_promotions(emails)
->>>>>>> origin/main
     fav_products    = _get_favourite_products(customer_id)
     recommendations = _get_recommendations(customer_id)
 
@@ -297,8 +271,6 @@ def show_customer_dashboard(customer_id):
     perks        = SEGMENT_PERKS.get(segment, [])
     tx_count     = len(purchases)
 
-<<<<<<< HEAD
-=======
     # Trigger celebration once per session if new promotional alerts are available.
     new_promo_count = _get_new_promo_count(customer_id, profile[5])
     # Fallback: if date-based comparison misses older active offers,
@@ -316,7 +288,6 @@ def show_customer_dashboard(customer_id):
         _mark_customer_active(customer_id)
         st.session_state[active_mark_key] = True
 
->>>>>>> origin/main
     # ── Hero header ───────────────────────────────────────
     st.markdown(f"""
     <div style="background:linear-gradient(135deg,{seg_color} 0%,{seg_color}99 100%);
@@ -353,11 +324,7 @@ def show_customer_dashboard(customer_id):
         avg = total_rev / tx_count if tx_count > 0 else 0
         st.metric("Avg Basket",       f"Rs.{avg:,.0f}")
     with c4:
-<<<<<<< HEAD
-        st.metric("Offers Received",  len(emails))
-=======
         st.metric("Active Offers",  len(active_promos))
->>>>>>> origin/main
 
     st.markdown("---")
 
@@ -396,15 +363,6 @@ def show_customer_dashboard(customer_id):
         # Recent promotions
         st.markdown('<div class="section-title">📧 Recent Promotions Sent to You</div>',
                     unsafe_allow_html=True)
-<<<<<<< HEAD
-        if emails:
-            for row in emails[:5]:
-                subject   = row[0]
-                sent_date = row[1]
-                status    = row[2]
-                date_str  = sent_date.strftime('%d %b %Y') if sent_date else 'N/A'
-                icon      = '✅' if status == 'sent' else '❌'
-=======
         if active_promos:
             for promo in active_promos:
                 subject = promo["subject"]

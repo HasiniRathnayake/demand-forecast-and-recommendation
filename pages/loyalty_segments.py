@@ -30,16 +30,6 @@ def show_segments():
         st.subheader("Segment Overview")
     with col2:
         if st.button("🔄 Run Analysis", type="primary", use_container_width=True):
-<<<<<<< HEAD
-            with st.spinner("Analysing customers..."):
-                seg     = CustomerSegmentation()
-                results = seg.run()
-                if results:
-                    st.success(f"✅ Segmented {len(results)} customers!")
-                    st.rerun()
-                else:
-                    st.error("No customers found.")
-=======
             # ── VALIDATION BEFORE ANALYSIS ──────────────────────────
             analysis_errors = []
             
@@ -81,7 +71,6 @@ def show_segments():
                 except Exception as e:
                     st.error(f"❌ Error during segmentation: {str(e)}")
                     st.session_state.analysis_running = False
->>>>>>> origin/main
 
     # ── Segment Chart + Table ─────────────────────────────
     seg_data = db.fetch_all("""
