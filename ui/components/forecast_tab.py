@@ -180,32 +180,10 @@ def _build_forecast_chart(
                 ),
                 hovertemplate="<b>%{x|%d %b}</b><br>Original AI: %{y:.0f} units<extra>Overridden</extra>",
             ))
-<<<<<<< HEAD
-            # Override values as bold stars
-            fig.add_trace(go.Scatter(
-                x=ov_dates,
-                y=ov_vals,
-                mode="markers+text",
-                name="Manual Override",
-                text=["✏️"] * len(ov_dates),
-                textposition="top center",
-                marker=dict(
-                    size=14,
-                    color="#7C3AED",
-                    symbol="star",
-                    line=dict(color="white", width=1.5),
-                ),
-                hovertemplate=(
-                    "<b>%{x|%d %b}</b><br>"
-                    "Override: <b>%{y:.0f} units</b><br>"
-                    "Reason: " + "<br>".join(r for r in ov_reasons if r) +
-                    "<extra>Manual Override</extra>"
-                ),
-=======
             # Override values as bold stars — one trace per override point
             # so each star renders independently with its own hover text
             for ov_d, ov_v, ov_r in zip(ov_dates, ov_vals, ov_reasons):
-                fig.add_trace(go.Scatter(
+                fig.add_trace(
                     x=[ov_d],
                     y=[ov_v],
                     mode="markers+text",
@@ -225,7 +203,7 @@ def _build_forecast_chart(
                         f"Reason: {ov_r or 'Manual override'}"
                         "<extra>Manual Override</extra>"
                     ),
-                ))
+                )
             # Add one invisible trace just for the legend entry
             fig.add_trace(go.Scatter(
                 x=[None], y=[None],
@@ -234,7 +212,6 @@ def _build_forecast_chart(
                 marker=dict(size=14, color="#7C3AED", symbol="star",
                             line=dict(color="white", width=1.5)),
                 showlegend=True,
->>>>>>> origin/main
             ))
 
     return fig

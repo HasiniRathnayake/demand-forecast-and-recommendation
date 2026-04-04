@@ -15,31 +15,21 @@ def show_email_history():
     db = DatabaseConnection()
 
     # ── KPI Row ───────────────────────────────────────────
-<<<<<<< HEAD
-    total_sent  = db.fetch_one("SELECT COUNT(*) FROM email_log")
-=======
     total_sent  = db.fetch_one("SELECT COUNT(*) FROM email_log WHERE delivery_status = 'sent'")
->>>>>>> origin/main
     total_open  = db.fetch_one("SELECT COUNT(*) FROM email_log WHERE opened = TRUE")
     total_click = db.fetch_one("SELECT COUNT(*) FROM email_log WHERE clicked = TRUE")
     total_fail  = db.fetch_one(
         "SELECT COUNT(*) FROM email_log WHERE delivery_status = 'failed'"
     )
-<<<<<<< HEAD
-=======
     total_scheduled = db.fetch_one(
         "SELECT COUNT(*) FROM email_log WHERE delivery_status = 'scheduled'"
     )
->>>>>>> origin/main
 
     sent_count  = total_sent[0]  if total_sent  else 0
     open_count  = total_open[0]  if total_open  else 0
     click_count = total_click[0] if total_click else 0
     fail_count  = total_fail[0]  if total_fail  else 0
-<<<<<<< HEAD
-=======
     scheduled_count = total_scheduled[0] if total_scheduled else 0
->>>>>>> origin/main
 
     open_rate  = round((open_count  / sent_count) * 100, 1) if sent_count > 0 else 0
     click_rate = round((click_count / sent_count) * 100, 1) if sent_count > 0 else 0
@@ -56,12 +46,6 @@ def show_email_history():
     with col5:
         st.metric("Click Rate",   f"{click_rate}%")
 
-<<<<<<< HEAD
-    st.divider()
-
-    if sent_count == 0:
-        st.info("No emails sent yet. Go to Campaign Builder to send your first campaign.")
-=======
     if scheduled_count > 0:
         st.info(f"📅 Scheduled emails pending: {scheduled_count}")
 
@@ -70,7 +54,6 @@ def show_email_history():
     total_records = sent_count + fail_count + scheduled_count
     if total_records == 0:
         st.info("No email activity yet. Go to Campaign Builder to send or schedule your first campaign.")
->>>>>>> origin/main
         return
 
     # ── Charts Row ────────────────────────────────────────
@@ -104,20 +87,13 @@ def show_email_history():
     st.divider()
 
     # ── Email Log Table ───────────────────────────────────
-<<<<<<< HEAD
-    st.subheader("📋 All Sent Emails")
-=======
     st.subheader("📋 Email Activity")
->>>>>>> origin/main
 
     # Filter
     col_f1, col_f2 = st.columns([2, 1])
     with col_f1:
         search = st.text_input("Search by customer name or email", placeholder="e.g. Kamal")
     with col_f2:
-<<<<<<< HEAD
-        status_filter = st.selectbox("Filter by status", ["All", "Sent", "Failed"])
-=======
         status_filter = st.selectbox("Filter by status", ["All", "Sent", "Failed", "Scheduled"])
 
     # ── VALIDATION FOR FILTERS ──────────────────────────
@@ -134,7 +110,6 @@ def show_email_history():
         for error in filter_errors:
             st.warning(error)
         st.stop()
->>>>>>> origin/main
 
     logs = db.fetch_all("""
         SELECT el.email_log_id,
@@ -152,33 +127,6 @@ def show_email_history():
         LIMIT 200
     """)
 
-<<<<<<< HEAD
-    if logs:
-        df = pd.DataFrame(logs, columns=[
-            'ID', 'Customer', 'Email', 'Type',
-            'Subject', 'Sent', 'Status', 'Opened', 'Clicked'
-        ])
-
-        # Apply filters
-        if search:
-            df = df[
-                df['Customer'].str.contains(search, case=False, na=False) |
-                df['Email'].str.contains(search, case=False, na=False)
-            ]
-        if status_filter != "All":
-            df = df[df['Status'] == status_filter.lower()]
-
-        df['Status']  = df['Status'].apply(
-            lambda x: '✅ Sent' if x == 'sent' else '❌ Failed'
-        )
-        df['Opened']  = df['Opened'].apply(lambda x: '✅' if x else '—')
-        df['Clicked'] = df['Clicked'].apply(lambda x: '✅' if x else '—')
-
-        st.markdown(f"Showing **{len(df)}** records")
-        st.dataframe(df, use_container_width=True, hide_index=True)
-    else:
-        st.info("No emails found.")
-=======
     # ── VALIDATION FOR RESULTS ──────────────────────────
     if not logs:
         st.info("No emails found.")
@@ -225,4 +173,3 @@ def show_email_history():
     else:
         st.markdown(f"Showing **{len(df)}** of **{original_count}** records")
         st.dataframe(df, use_container_width=True, hide_index=True)
->>>>>>> origin/main
