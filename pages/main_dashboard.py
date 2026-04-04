@@ -35,7 +35,7 @@ def render_main_dashboard() -> None:
             unsafe_allow_html=True,
         )
     with col_user:
-        role_color = {"admin": "#DC2626", "staff": "#059669", "customer": "#2563EB"}.get(role, "#64748B")
+        role_color = {"admin": "#DC2626", "staff": "#059669", "customer": "#2563EB", "supplier": "#7C3AED"}.get(role, "#64748B")
         st.markdown(
             f'<div style="text-align:right;padding-top:.5rem">'
             f'<div style="font-weight:600">👤 {username}</div>'
@@ -116,6 +116,18 @@ def render_main_dashboard() -> None:
             },
         ]
 
+        if role == "admin":
+            modules.append(
+                {
+                    "icon": "✅",
+                    "title": "Staff Approvals",
+                    "desc": "Review and approve new staff registrations before they can log in.",
+                    "page": "admin_staff_approvals",
+                    "color": "#0F766E",
+                    "ready": True,
+                }
+            )
+
         cols = st.columns(3)
         for i, mod in enumerate(modules):
             with cols[i % 3]:
@@ -155,4 +167,27 @@ def render_main_dashboard() -> None:
         user = get_current_user()
         from pages.customer_dashboard import show_customer_dashboard
         show_customer_dashboard(user.get('customer_id'))
+
+    elif role == "supplier":
+        st.markdown(
+            f'<div class="section-title">👋 Welcome, {username}! '
+            f'Open your supplier workspace.</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown("")
+        st.markdown(
+            """
+            <div class="metric-card" style="min-height:170px;border-left:4px solid #7C3AED;max-width:520px;">
+                <div style="font-size:1.8rem">📨</div>
+                <div style="font-weight:700;font-size:.95rem;margin:.35rem 0 .2rem">Supplier Dashboard</div>
+                <div style="font-size:.78rem;color:var(--text-muted,#888);line-height:1.4">
+                    View your purchase orders, notes, and mark orders as sent to delivery.
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        if st.button("Open Supplier Dashboard →", key="nav_supplier_dashboard", use_container_width=False, type="primary"):
+            st.session_state.current_page = "supplier_dashboard"
+            st.rerun()
  

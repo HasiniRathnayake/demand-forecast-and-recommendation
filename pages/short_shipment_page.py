@@ -1,7 +1,5 @@
 # pages/short_shipment_page.py
 import streamlit as st
-import sys
-import os
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -90,20 +88,19 @@ def send_supplier_alert_outlook(supplier_email, supplier_name, alert_type, detai
         return False
 
 
-# Add module path
-sys.path.insert(0, os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    'modules', 'short_shipment_detector'
-))
-
-from detectors import ShortShipmentDetector
-from utils import validate_email, validate_phone, validate_supplier_id, validate_product_code
+from modules.short_shipment_detector.detectors import ShortShipmentDetector
+from modules.short_shipment_detector.utils import (
+    validate_email,
+    validate_phone,
+    validate_supplier_id,
+    validate_product_code,
+)
 
 
 def render_short_shipment():
     """Wrapper that renders short shipment module inside shared app"""
 
-    from database import (
+    from modules.short_shipment_detector.database import (
         get_db_connection, init_database,
         add_sample_data, get_suppliers_sqlite, get_products_sqlite
     )
@@ -245,6 +242,154 @@ def render_short_shipment():
         except Exception as e:
             st.error(f"Error fetching deliveries: {e}")
             return pd.DataFrame()
+
+    # =========================================================
+    # Function to get pending purchase orders
+    # =========================================================
+    def get_pending_purchase_orders():
+        """Fetch purchase orders waiting to be delivered (from Replenishment system)"""
+        try:
+            if conn_type == "supabase":
+                response = conn.table("purchase_orders")\
+                    .select("po_id, status, replenishment_orders(product_code, suggested_qty), suppliers(supplier_name)")\
+                    .eq("status", "SENT").execute()
+                
+                data = []
+                for po in response.data:
+                    rep = po.get('replenishment_orders') or {}
+                    sup = po.get('suppliers') or {}
+                    data.append({
+                        "po_id": po.get('po_id'),
+                        "supplier_name": sup.get('supplier_name', 'Unknown'),
+                        "product_code": rep.get('product_code', 'Unknown'),
+                        "ordered_qty": rep.get('suggested_qty', 0)
+                    })
+                return pd.DataFrame(data)
+            else:
+                return pd.DataFrame()
+        except Exception as e:
+            st.error(f"Error fetching pending POs: {e}")
+            return pd.DataFrame()
+
+    # =========================================================
+    # Draft storage for Record Delivery (persistent across restarts)
+    # =========================================================
+    def init_delivery_draft_table():
+        """Create draft table in local SQLite for persistent form drafts."""
+        db_conn = sqlite3.connect('supermarket.db')
+        cursor = db_conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS delivery_drafts (
+                draft_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number TEXT NOT NULL,
+                supplier_name TEXT NOT NULL,
+                product_name TEXT NOT NULL,
+                ordered_quantity REAL NOT NULL,
+                received_quantity REAL NOT NULL,
+                discrepancy_quantity REAL NOT NULL,
+                discrepancy_percentage REAL NOT NULL,
+                delivery_date TEXT NOT NULL,
+                source_type TEXT DEFAULT 'manual',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        db_conn.commit()
+        db_conn.close()
+
+    def save_delivery_draft(order_number, supplier_name, product_name, ordered_qty, received_qty, delivery_date, source_type):
+        """Persist one draft row to local SQLite."""
+        disc_qty = float(received_qty) - float(ordered_qty)
+        disc_pct = (disc_qty / float(ordered_qty) * 100) if float(ordered_qty) > 0 else 0.0
+
+        db_conn = sqlite3.connect('supermarket.db')
+        cursor = db_conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO delivery_drafts (
+                order_number, supplier_name, product_name,
+                ordered_quantity, received_quantity,
+                discrepancy_quantity, discrepancy_percentage,
+                delivery_date, source_type
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(order_number),
+                str(supplier_name),
+                str(product_name),
+                float(ordered_qty),
+                float(received_qty),
+                float(disc_qty),
+                float(round(disc_pct, 1)),
+                str(delivery_date),
+                str(source_type),
+            ),
+        )
+        db_conn.commit()
+        db_conn.close()
+
+    def get_delivery_drafts(limit=50):
+        """Load recent drafts from local SQLite."""
+        db_conn = sqlite3.connect('supermarket.db')
+        query = """
+            SELECT
+                draft_id,
+                created_at,
+                order_number,
+                supplier_name,
+                product_name,
+                ordered_quantity,
+                received_quantity,
+                discrepancy_quantity,
+                discrepancy_percentage,
+                delivery_date,
+                source_type
+            FROM delivery_drafts
+            ORDER BY draft_id DESC
+            LIMIT ?
+        """
+        drafts_df = pd.read_sql_query(query, db_conn, params=[limit])
+        db_conn.close()
+        return drafts_df
+
+    def get_delivery_drafts_for_reconciliation(start_date, end_date):
+        """Load draft deliveries for a date range and map them to reconciliation schema."""
+        db_conn = sqlite3.connect('supermarket.db')
+        query = """
+            SELECT
+                d.draft_id,
+                d.delivery_date as date,
+                d.order_number as invoice,
+                d.supplier_name as supplier,
+                d.product_name as product,
+                COALESCE(p.product_code, 'DRAFT') as product_code,
+                d.ordered_quantity as ordered,
+                d.received_quantity as received,
+                d.discrepancy_quantity as discrepancy_qty,
+                d.discrepancy_percentage as discrepancy_pct,
+                COALESCE(p.unit_price, 0) as unit_price
+            FROM delivery_drafts d
+            LEFT JOIN product_catalog p ON d.product_name = p.product_name
+            WHERE date(d.delivery_date) BETWEEN date(?) AND date(?)
+            ORDER BY date(d.delivery_date) DESC, d.draft_id DESC
+        """
+        drafts_df = pd.read_sql_query(
+            query,
+            db_conn,
+            params=[start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')],
+        )
+        db_conn.close()
+
+        if drafts_df.empty:
+            return drafts_df
+
+        drafts_df['financial_impact'] = drafts_df['discrepancy_qty'] * drafts_df['unit_price']
+        drafts_df['status'] = drafts_df['discrepancy_qty'].apply(
+            lambda x: 'Short' if x < 0 else 'Over' if x > 0 else 'Accurate'
+        )
+        drafts_df['source'] = 'Draft'
+        drafts_df['delivery_id'] = drafts_df['draft_id'].apply(lambda x: f"DRAFT-{x}")
+        return drafts_df
 
     # =========================================================
     # Function to ensure sample data exists
@@ -424,7 +569,13 @@ def render_short_shipment():
                             'status': 'Short' if disc_qty < 0 else 'Over' if disc_qty > 0 else 'Accurate'
                         })
 
-                return pd.DataFrame(data)
+                df = pd.DataFrame(data)
+                if not df.empty:
+                    df['source'] = 'Finalized'
+                    return df
+
+                # Fallback: show local saved drafts when finalized records are unavailable
+                return get_delivery_drafts_for_reconciliation(start_date, end_date)
             else:
                 # SQLite version
                 query = """
@@ -456,8 +607,11 @@ def render_short_shipment():
                     df['status'] = df['discrepancy_qty'].apply(
                         lambda x: 'Short' if x < 0 else 'Over' if x > 0 else 'Accurate'
                     )
+                    df['source'] = 'Finalized'
+                    return df
 
-                return df
+                # Fallback: show local saved drafts when finalized records are unavailable
+                return get_delivery_drafts_for_reconciliation(start_date, end_date)
         except Exception as e:
             st.error(f"Error fetching data: {e}")
             return pd.DataFrame()
@@ -532,6 +686,7 @@ def render_short_shipment():
 
     # Call ensure_sample_data to check/initialize if needed
     ensure_sample_data()
+    init_delivery_draft_table()
 
     # =========================================================
     # Navigation Tabs
@@ -560,12 +715,40 @@ def render_short_shipment():
             for error in errors:
                 st.warning(error)
             df = pd.DataFrame()
+            dashboard_source = "None"
         else:
             df = get_deliveries(start_date, end_date)
+            dashboard_source = "Finalized"
+
+            if df.empty:
+                drafts_df = get_delivery_drafts_for_reconciliation(start_date, end_date)
+                if not drafts_df.empty:
+                    status_map = {
+                        'Accurate': '✅ Accurate',
+                        'Short': '⚠️ Short Shipped',
+                        'Over': '📦 Over Delivered',
+                    }
+                    df = pd.DataFrame({
+                        'delivery_date': drafts_df['date'],
+                        'invoice_number': drafts_df['invoice'],
+                        'supplier_name': drafts_df['supplier'],
+                        'product_name': drafts_df['product'],
+                        'ordered_quantity': drafts_df['ordered'],
+                        'received_quantity': drafts_df['received'],
+                        'discrepancy_quantity': drafts_df['discrepancy_qty'],
+                        'discrepancy_percentage': drafts_df['discrepancy_pct'],
+                        'financial_impact': drafts_df['financial_impact'],
+                        'status': drafts_df['status'].map(status_map).fillna('Unknown'),
+                    })
+                    dashboard_source = "Draft"
 
         if df.empty:
             st.info("No deliveries found. Use 'Record Delivery' tab to add deliveries.")
         else:
+            if dashboard_source == "Draft":
+                st.warning("Showing dashboard from saved drafts because no finalized deliveries were found in this period.")
+            st.caption(f"Dashboard source: {dashboard_source} | Rows: {len(df)}")
+
             # KPI Cards
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -579,190 +762,88 @@ def render_short_shipment():
                 st.metric("Financial Impact", f"LKR {abs(total_impact):,.2f}")
 
             st.markdown("---")
-           
-            # =========================================================
-            # SECTION 4: QUICK STATS (New)
-            # =========================================================
-            st.markdown("---")
-            st.markdown("### 📊 Quick Statistics")
-            
-            col_stat1, col_stat2, col_stat3, col_stat4 = st.columns(4)
-            
-            with col_stat1:
-                # Top Performing Supplier
-                top_supplier = df.groupby('supplier_name')['status'].apply(
-                    lambda x: (x == '✅ Accurate').mean() * 100
-                ).sort_values(ascending=False).head(1)
-                if not top_supplier.empty:
-                    st.metric("🏆 Top Supplier", top_supplier.index[0], 
-                             f"{top_supplier.values[0]:.0f}% accuracy")
-            
-            with col_stat2:
-                # Worst Performing Supplier
-                worst_supplier = df.groupby('supplier_name')['status'].apply(
-                    lambda x: (x == '⚠️ Short Shipped').mean() * 100
-                ).sort_values(ascending=False).head(1)
-                if not worst_supplier.empty:
-                    st.metric("⚠️ Needs Attention", worst_supplier.index[0], 
-                             f"{worst_supplier.values[0]:.0f}% short rate",
-                             delta_color="inverse")
-            
-            with col_stat3:
-                # Total Loss
-                total_loss = abs(df[df['financial_impact'] < 0]['financial_impact'].sum())
-                st.metric("💰 Total Loss", f"LKR {total_loss:,.2f}")
-            
-            with col_stat4:
-                # Total Credit from Over-deliveries
-                total_credit = df[df['financial_impact'] > 0]['financial_impact'].sum()
-                st.metric("📦 Total Credit", f"LKR {total_credit:,.2f}")
-            
-            # =========================================================
-            # SECTION 3: RECENT DELIVERIES TABLE (Enhanced)
-            # =========================================================
-            st.markdown("### 📋 Recent Deliveries")
-            
-            # Add filter options
-            col_filter1, col_filter2, col_filter3 = st.columns(3)
-            with col_filter1:
-                show_limit = st.selectbox("Show rows", [10, 20, 50], index=0, key="dash_limit")
-            with col_filter2:
-                filter_status = st.selectbox("Filter by Status", ["All", "✅ Accurate", "⚠️ Short Shipped", "📦 Over Delivered"], key="dash_status")
-            with col_filter3:
-                suppliers_list = df['supplier_name'].unique().tolist()
-                filter_supplier = st.selectbox("Filter by Supplier", ["All"] + suppliers_list, key="dash_supplier")
-            
-            # Apply filters
-            filtered_df = df.copy()
-            if filter_status != "All":
-                filtered_df = filtered_df[filtered_df['status'] == filter_status]
-            if filter_supplier != "All":
-                filtered_df = filtered_df[filtered_df['supplier_name'] == filter_supplier]
-            
-            # Display table
-            display_cols = ['delivery_date', 'invoice_number', 'supplier_name', 'product_name', 
-                           'ordered_quantity', 'received_quantity', 'discrepancy_quantity', 
-                           'discrepancy_percentage', 'financial_impact', 'status']
-            
-            if all(col in filtered_df.columns for col in display_cols):
-                display_df = filtered_df[display_cols].head(show_limit).copy()
-                display_df.columns = ['Date', 'Invoice #', 'Supplier', 'Product', 
-                                     'Ordered', 'Received', 'Variance', 'Variance %', 
-                                     'Financial Impact', 'Status']
-                
-                # Format numbers
-                display_df['Ordered'] = display_df['Ordered'].apply(lambda x: f"{x:,.0f}")
-                display_df['Received'] = display_df['Received'].apply(lambda x: f"{x:,.0f}")
-                display_df['Variance'] = display_df['Variance'].apply(lambda x: f"{x:+,.0f}")
-                display_df['Variance %'] = display_df['Variance %'].apply(lambda x: f"{x:+.1f}%")
-                display_df['Financial Impact'] = display_df['Financial Impact'].apply(lambda x: f"LKR {x:+,.2f}")
-                
-                # Color code rows
-                def color_status_rows(row):
-                    if '⚠️ Short Shipped' in row['Status']:
-                        return ['background-color: #ffcccc'] * len(row)
-                    elif '📦 Over Delivered' in row['Status']:
-                        return ['background-color: #ccffcc'] * len(row)
-                    return [''] * len(row)
-                
-                st.dataframe(
-                    display_df.style.apply(color_status_rows, axis=1),
-                    use_container_width=True,
-                    height=400
-                )
-            else:
-                st.dataframe(filtered_df.head(show_limit), use_container_width=True)
-            
-                        # =========================================================
-            # SECTION 5: ALERTS (Enhanced with Tooltips)
-            # =========================================================
-            st.markdown("---")
-            st.markdown("### 🚨 Alerts")
-            st.caption("ℹ️ **Hover over any alert** to see why it was triggered")
-            
+            # Chart
+            st.markdown("**Delivery Status**")
+            status_counts = df['status'].value_counts().reset_index()
+            status_counts.columns = ['Status', 'Count']
+            fig = px.pie(status_counts, values='Count', names='Status', hole=0.35)
+            fig.update_layout(height=300)
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
+        st.markdown("## 🚨 Alerts")
+        st.caption("ℹ️ Hover over any alert to see why it was triggered")
+
+        if df.empty:
+            st.info("No alert data available for the selected date range.")
+        else:
             alerts = []
-            alert_explanations = []
-            
-            # Check for critical issues (loss > LKR 10,000)
-            critical_loss = df[df['financial_impact'] < -10000]
-            if not critical_loss.empty:
-                for _, row in critical_loss.iterrows():
-                    loss_amount = abs(row['financial_impact'])
-                    alerts.append(f"🔴 CRITICAL: {row['supplier_name']} caused LKR {loss_amount:,.0f} loss on {row['product_name']}")
-                    alert_explanations.append(f"""
-                    **Why this alert?**
-                    - Loss amount: LKR {loss_amount:,.0f}
-                    - Threshold: > LKR 10,000
-                    - Impact: This supplier has caused significant financial loss
-                    - Recommended action: Immediate investigation required
-                    """)
-            
-            # Check for repeat offenders (3+ short shipments)
-            repeat_offenders = df[df['status'] == '⚠️ Short Shipped'].groupby('supplier_name').size()
-            repeat_offenders = repeat_offenders[repeat_offenders >= 3]
-            if not repeat_offenders.empty:
-                for supplier, count in repeat_offenders.items():
-                    alerts.append(f"⚠️ WARNING: {supplier} has {count} short shipments")
-                    alert_explanations.append(f"""
-                    **Why this alert?**
-                    - Short shipments: {count}
-                    - Threshold: 3 or more short shipments
-                    - Pattern: This supplier consistently delivers less than ordered
-                    - Recommended action: Schedule performance review meeting
-                    """)
-            
-            # Check for improving trends
-            supplier_trend = df.groupby('supplier_name').apply(
-                lambda x: x['discrepancy_percentage'].mean() if len(x) >= 2 else 0
-            )
-            improving = supplier_trend[supplier_trend > 0].head(2)
-            if not improving.empty:
-                for supplier, trend in improving.items():
-                    alerts.append(f"📈 IMPROVING: {supplier} shows {trend:.1f}% improvement")
-                    alert_explanations.append(f"""
-                    **Why this alert?**
-                    - Improvement rate: {trend:.1f}%
-                    - Positive trend: Discrepancy percentage is decreasing
-                    - Impact: Supplier is getting better at accurate deliveries
-                    - Recommended action: Acknowledge and encourage continued improvement
-                    """)
-            
-            # Check for delivery accuracy drops (new)
-            accuracy_drop = df.groupby('supplier_name').apply(
-                lambda x: x['discrepancy_percentage'].mean() - x['discrepancy_percentage'].mean() if len(x) >= 2 else 0
-            )
-            # Check for products with high discrepancy rate
-            product_issues = df[abs(df['discrepancy_percentage']) > 15].groupby('product_name').size()
-            product_issues = product_issues[product_issues >= 2]
-            if not product_issues.empty:
-                for product, count in product_issues.items():
-                    alerts.append(f"⚠️ PRODUCT ISSUE: {product} has {count} deliveries with >15% discrepancy")
-                    alert_explanations.append(f"""
-                    **Why this alert?**
-                    - Product: {product}
-                    - Problematic deliveries: {count}
-                    - Threshold: >15% discrepancy
-                    - Recommended action: Check quality control for this product
-                    """)
-            
-            # Display alerts with hover explanations
-            if alerts:
-                for i, alert in enumerate(alerts[:5]):  # Show top 5 alerts
-                    if "CRITICAL" in alert:
-                        with st.expander(f"{alert}", expanded=False):
-                            st.markdown(alert_explanations[i] if i < len(alert_explanations) else "**Investigate immediately**")
-                    elif "WARNING" in alert or "PRODUCT ISSUE" in alert:
-                        with st.expander(f"{alert}", expanded=False):
-                            st.markdown(alert_explanations[i] if i < len(alert_explanations) else "**Needs attention**")
+
+            short_df = df[df['discrepancy_quantity'] < 0].copy()
+            if not short_df.empty:
+                short_df['loss_lkr'] = short_df['financial_impact'].abs()
+                loss_by_supplier_product = (
+                    short_df.groupby(['supplier_name', 'product_name'], dropna=False)['loss_lkr']
+                    .sum()
+                    .reset_index()
+                    .sort_values('loss_lkr', ascending=False)
+                )
+
+                for _, row in loss_by_supplier_product.head(3).iterrows():
+                    loss_val = float(row['loss_lkr'])
+                    if loss_val >= 20000:
+                        level = "🔴 CRITICAL"
+                    elif loss_val >= 10000:
+                        level = "🟠 HIGH"
                     else:
-                        with st.expander(f"{alert}", expanded=False):
-                            st.markdown(alert_explanations[i] if i < len(alert_explanations) else "**Positive development**")
-                
-                if len(alerts) > 5:
-                    st.caption(f"... and {len(alerts) - 5} more alerts")
+                        level = "🟡 WATCH"
+
+                    alerts.append({
+                        'title': (
+                            f"{level}: {row['supplier_name']} caused LKR {loss_val:,.0f} "
+                            f"loss on {row['product_name']}"
+                        ),
+                        'details': (
+                            f"Total shortage loss for this supplier-product combination in the selected period: "
+                            f"LKR {loss_val:,.2f}."
+                        ),
+                    })
+
+            trend_df = df.copy()
+            trend_df['delivery_date'] = pd.to_datetime(trend_df['delivery_date'], errors='coerce')
+            trend_df = trend_df.dropna(subset=['delivery_date'])
+            if not trend_df.empty:
+                trend_df = trend_df.sort_values('delivery_date')
+                for supplier_name, supplier_rows in trend_df.groupby('supplier_name'):
+                    if len(supplier_rows) < 4:
+                        continue
+
+                    midpoint = len(supplier_rows) // 2
+                    earlier = supplier_rows.iloc[:midpoint]
+                    recent = supplier_rows.iloc[midpoint:]
+
+                    earlier_abs = earlier['discrepancy_percentage'].abs().mean()
+                    recent_abs = recent['discrepancy_percentage'].abs().mean()
+                    if earlier_abs <= 0:
+                        continue
+
+                    improvement_pct = ((earlier_abs - recent_abs) / earlier_abs) * 100
+                    if improvement_pct >= 3:
+                        alerts.append({
+                            'title': f"📈 IMPROVING: {supplier_name} shows {improvement_pct:.1f}% improvement",
+                            'details': (
+                                f"Average absolute discrepancy improved from {earlier_abs:.1f}% "
+                                f"to {recent_abs:.1f}% across the selected deliveries."
+                            ),
+                        })
+
+            if not alerts:
+                st.success("✅ No critical issues detected for the selected period.")
             else:
-                st.success("✅ No active alerts. All suppliers performing well!")
-            
+                for alert in alerts[:6]:
+                    with st.expander(alert['title']):
+                        st.write(alert['details'])
+
     # =========================================================
     # TAB 2: RECORD DELIVERY
     # =========================================================
@@ -804,7 +885,33 @@ def render_short_shipment():
             pc2.metric("Percentage", f"{disc_pct:+.1f}%")
             pc3.metric("Status", status)
 
-            if st.button("💾 Save Delivery", type="primary", use_container_width=True):
+            bcol1, bcol2 = st.columns(2)
+            save_delivery_clicked = bcol1.button("💾 Save Delivery", type="primary", use_container_width=True)
+            save_draft_clicked = bcol2.button("📝 Save Draft", use_container_width=True)
+
+            if save_draft_clicked:
+                if not order_num:
+                    st.error("Please enter an order number before saving draft.")
+                elif ordered_qty == 0:
+                    st.error("Ordered quantity cannot be zero.")
+                else:
+                    source_type = "auto_po" if is_auto else "manual"
+                    try:
+                        save_delivery_draft(
+                            order_number=order_num,
+                            supplier_name=supplier,
+                            product_name=product,
+                            ordered_qty=ordered_qty,
+                            received_qty=received_qty,
+                            delivery_date=del_date.strftime('%Y-%m-%d'),
+                            source_type=source_type,
+                        )
+                        st.success("✅ Draft saved. It will remain available after app restart.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error saving draft: {e}")
+
+            if save_delivery_clicked:
                 if not order_num:
                     st.error("Please enter an order number.")
                 elif ordered_qty == 0:
@@ -834,6 +941,12 @@ def render_short_shipment():
                                     "billed_quantity": ordered_qty,
                                     "received_quantity": received_qty
                                 }).execute()
+
+                                # --- START PO HANDSHAKE ---
+                                if is_auto:
+                                    conn.table("purchase_orders").update({"status": "DELIVERED"}).eq("po_id", auto_po['po_id']).execute()
+                                # --- END PO HANDSHAKE ---
+
                             st.success("✅ Delivery recorded successfully!")
                             st.balloons()
                             st.rerun()
@@ -873,123 +986,68 @@ def render_short_shipment():
             'unit_price': 'first'
         }).reset_index()
 
-        adjustments = []
-        
-        for _, row in product_summary.iterrows():
-            cumulative_shortage = abs(row['discrepancy_qty']) if row['discrepancy_qty'] < 0 else 0
-            cumulative_overage = row['discrepancy_qty'] if row['discrepancy_qty'] > 0 else 0
-
-            if cumulative_shortage > 0:
-                adjustment = {
-                    'supplier': row['supplier'],
-                    'product': row['product'],
-                    'product_code': row['product_code'],
-                    'cumulative_shortage': cumulative_shortage,
-                    'cumulative_overage': cumulative_overage,
-                    'net_position': -cumulative_shortage + cumulative_overage,
-                    'adjustment_type': '📦 ADD TO NEXT ORDER',
-                    'adjustment_qty': cumulative_shortage,
-                    'financial_impact': row['financial_impact'],
-                    'reason': f"Short by {cumulative_shortage:,.0f} units",
-                    'action': f"Add {cumulative_shortage:,.0f} extra units to next order"
-                }
-            elif cumulative_overage > 0:
-                adjustment = {
-                    'supplier': row['supplier'],
-                    'product': row['product'],
-                    'product_code': row['product_code'],
-                    'cumulative_shortage': 0,
-                    'cumulative_overage': cumulative_overage,
-                    'net_position': cumulative_overage,
-                    'adjustment_type': '💰 CREDIT FOR NEXT ORDER',
-                    'adjustment_qty': cumulative_overage,
-                    'financial_impact': row['financial_impact'],
-                    'reason': f"Over by {cumulative_overage:,.0f} units",
-                    'action': f"Credit {cumulative_overage:,.0f} units for next order"
-                }
+            st.markdown("---")
+            st.markdown("#### 🗂️ Saved Delivery Drafts")
+            drafts_df = get_delivery_drafts(limit=50)
+            if drafts_df.empty:
+                st.info("No saved drafts yet. Click 'Save Draft' to store ordered vs received shipment details.")
             else:
-                adjustment = {
-                    'supplier': row['supplier'],
-                    'product': row['product'],
-                    'product_code': row['product_code'],
-                    'cumulative_shortage': 0,
-                    'cumulative_overage': 0,
-                    'net_position': 0,
-                    'adjustment_type': '✅ NO ADJUSTMENT',
-                    'adjustment_qty': 0,
-                    'financial_impact': 0,
-                    'reason': "All deliveries accurate",
-                    'action': "No adjustment needed"
-                }
-            
-            adjustments.append(adjustment)
-        
-        return pd.DataFrame(adjustments)
+                view_df = drafts_df.copy()
+                view_df.columns = [
+                    "Draft ID",
+                    "Saved At",
+                    "Order/Invoice",
+                    "Supplier",
+                    "Product",
+                    "Ordered Qty",
+                    "Received Qty",
+                    "Variance Qty",
+                    "Variance %",
+                    "Delivery Date",
+                    "Source",
+                ]
+                st.dataframe(view_df, use_container_width=True, hide_index=True)
+
     # =========================================================
     # TAB 2: RECORD DELIVERY (continued)
     # =========================================================
-    with tab2:
-        st.markdown('<div class="section-title">📦 Record New Delivery</div>', unsafe_allow_html=True)
+    with tab3:
+        st.markdown('<div class="section-title">📊 Order vs Received Reconciliation</div>', unsafe_allow_html=True)
+        st.markdown("Track discrepancies and automatically adjust future orders")
 
-        
+        recon_columns = [
+            'Date',
+            'Order/Invoice',
+            'Supplier',
+            'Product Code',
+            'Product',
+            'Ordered Qty',
+            'Received Qty',
+            'Variance Qty',
+            'Variance %',
+            'Financial Impact (LKR)',
+            'Status',
+            'Source',
+        ]
 
-        # =========================================================
-        # ADD THIS SECTION - View Recent Deliveries Table
-        # =========================================================
-        st.markdown("---")
-        st.markdown("## 📋 Recent Deliveries")
-        
-        # Fetch recent deliveries to display
-        if conn_type == "supabase":
-            try:
-                # Get recent deliveries with supplier and product info
-                recent_response = conn.table("deliveries")\
-                    .select("""
-                        delivery_id,
-                        invoice_number,
-                        delivery_date,
-                        suppliers(supplier_name),
-                        delivery_items(
-                            product_code,
-                            billed_quantity,
-                            received_quantity,
-                            product_catalog(product_name)
-                        )
-                    """)\
-                    .order("delivery_date", desc=True)\
-                    .limit(20)\
-                    .execute()
-                
-                recent_data = []
-                for delivery in recent_response.data:
-                    supplier_name = delivery.get('suppliers', {}).get('supplier_name', 'Unknown') if delivery.get('suppliers') else 'Unknown'
-                    
-                    for item in delivery.get('delivery_items', []):
-                        product_info = item.get('product_catalog', {})
-                        billed = float(item.get('billed_quantity', 0))
-                        received = float(item.get('received_quantity', 0))
-                        disc = received - billed
-                        
-                        recent_data.append({
-                            'Date': delivery.get('delivery_date'),
-                            'Invoice #': delivery.get('invoice_number'),
-                            'Supplier': supplier_name,
-                            'Product': product_info.get('product_name', 'Unknown'),
-                            'Ordered': f"{billed:,.0f}",
-                            'Received': f"{received:,.0f}",
-                            'Variance': f"{disc:+,.0f}",
-                            'Status': '⚠️ Short' if disc < 0 else '📦 Over' if disc > 0 else '✅ OK'
-                        })
-                
-                if recent_data:
-                    recent_df = pd.DataFrame(recent_data)
-                    st.dataframe(recent_df, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No deliveries recorded yet.")
-                    
-            except Exception as e:
-                st.info(f"Unable to load recent deliveries: {e}")
-                
+        # Date Range Selector
+        col1, col2 = st.columns(2)
+        with col1:
+            rec_start_date = st.date_input("From Date", value=date.today() - timedelta(days=365), key="rec_start")
+        with col2:
+            rec_end_date = st.date_input("To Date", value=date.today(), key="rec_end")
+
+        # Load data
+        rec_df = get_delivery_data_for_reconciliation(rec_start_date, rec_end_date)
+        st.caption(f"Rows loaded for reconciliation: {len(rec_df)}")
+
+        if not rec_df.empty and 'source' in rec_df.columns and (rec_df['source'] == 'Draft').all():
+            st.warning("Showing draft rows because no finalized deliveries were found for this period.")
+
+        if rec_df.empty:
+            st.info("No delivery data found for the selected period. Try a wider date range or record at least one delivery in Tab 2.")
+            st.markdown("## 📋 Reconciliation Table")
+            st.dataframe(pd.DataFrame(columns=recon_columns), use_container_width=True, hide_index=True)
         else:
             # SQLite version
             try:
@@ -1026,10 +1084,65 @@ def render_short_shipment():
                 st.info(f"Unable to load recent deliveries: {e}")
 
             # =========================================================
-    # FUNCTION: Calculate compensation for next order
-    # =========================================================
-    def calculate_next_order_adjustment(supplier_data):
-        """Calculate how to adjust next order to compensate"""
+            # SECTION 2: ORDER RECONCILIATION TABLE
+            # =========================================================
+            st.markdown("## 📋 Reconciliation Table")
+
+            suppliers_list = sorted(rec_df['supplier'].dropna().unique().tolist())
+
+            f1, f2 = st.columns(2)
+            with f1:
+                selected_supplier = st.selectbox(
+                    "Supplier Filter",
+                    ["All Suppliers"] + suppliers_list,
+                    key="recon_supplier_filter",
+                )
+            with f2:
+                selected_status = st.selectbox(
+                    "Status Filter",
+                    ["All", "Short", "Over", "Accurate"],
+                    key="recon_status_filter",
+                )
+
+            filtered_df = rec_df.copy()
+            if selected_supplier != "All Suppliers":
+                filtered_df = filtered_df[filtered_df['supplier'] == selected_supplier]
+            if selected_status != "All":
+                filtered_df = filtered_df[filtered_df['status'] == selected_status]
+
+            if filtered_df.empty:
+                st.info("No reconciliation rows match the selected filters.")
+            else:
+                recon_table = filtered_df[[
+                    'date',
+                    'invoice',
+                    'supplier',
+                    'product_code',
+                    'product',
+                    'ordered',
+                    'received',
+                    'discrepancy_qty',
+                    'discrepancy_pct',
+                    'financial_impact',
+                    'status',
+                    'source',
+                ]].copy()
+
+                recon_table['date'] = pd.to_datetime(recon_table['date'], errors='coerce').dt.strftime('%Y-%m-%d')
+                recon_table['ordered'] = recon_table['ordered'].round(2)
+                recon_table['received'] = recon_table['received'].round(2)
+                recon_table['discrepancy_qty'] = recon_table['discrepancy_qty'].round(2)
+                recon_table['discrepancy_pct'] = recon_table['discrepancy_pct'].round(1)
+                recon_table['financial_impact'] = recon_table['financial_impact'].round(2)
+
+                recon_table.columns = recon_columns
+
+                st.dataframe(recon_table, use_container_width=True, hide_index=True)
+
+            # =========================================================
+            # SECTION 3: SUPPLIER RECONCILIATION
+            # =========================================================
+            st.markdown("## 🏭 Supplier Reconciliation")
 
         if supplier_data.empty:
             return None
