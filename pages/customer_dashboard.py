@@ -375,34 +375,27 @@ def show_customer_dashboard(customer_id):
                     if start_date and end_date else
                     "Validity available in email details"
                 )
->>>>>>> origin/main
                 st.markdown(
                     f'<div class="metric-card" style="margin-bottom:8px;'
                     f'padding:12px 16px;">'
                     f'<div style="font-weight:600;font-size:14px;">'
-<<<<<<< HEAD
-                    f'{icon} {subject}</div>'
-                    f'<div style="font-size:12px;color:var(--text-muted);">'
-                    f'Received: {date_str}</div>'
-=======
                     f'{subject}</div>'
                     f'<div style="font-size:12px;color:var(--text-muted);">'
                     f'Received: {date_str}</div>'
                     f'<div style="font-size:12px;color:var(--text-muted);">'
                     f'{validity}</div>'
->>>>>>> origin/main
                     f'</div>',
                     unsafe_allow_html=True
                 )
         else:
             st.markdown(
-<<<<<<< HEAD
+
                 '<div class="alert-info">No promotions yet — '
                 'check back soon for exclusive offers!</div>',
-=======
+
                 '<div class="alert-info">No active promotions right now — '
                 'check back soon for fresh offers!</div>',
->>>>>>> origin/main
+
                 unsafe_allow_html=True
             )
 
