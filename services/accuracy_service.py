@@ -1,4 +1,17 @@
+"""
+services/accuracy_service.py
+=============================
+Standalone accuracy / evaluation service.
 
+Centralises all model-performance calculations so:
+  - The dashboard can call it independently of the forecaster
+  - The real XGBoost/RF models can plug in their own metrics later
+  - Tests can import this without touching the ML layer
+
+Internally delegates to BaseForecaster.calculate_accuracy_metrics()
+for the actual maths, but also adds higher-level helpers (grade labels,
+comparison between two models, threshold checks).
+"""
 
 from __future__ import annotations
 import pandas as pd
@@ -72,11 +85,14 @@ def accuracy_grade(metrics: dict) -> dict:
     r2 = metrics.get("r2_score", 0.0)
     mape = metrics.get("mape", 100.0)
 
-    if r2 >= 0.85 and mape <= 10:
+    # Thresholds calibrated for retail demand forecasting
+    # Industry standard MAPE for grocery demand: 15-25%
+    # R² > 0.75 is considered good for multi-product forecasting
+    if r2 >= 0.80 and mape <= 12:
         grade, color, emoji = "Excellent", "#059669", "🟢"
-    elif r2 >= 0.70 and mape <= 20:
+    elif r2 >= 0.65 and mape <= 20:
         grade, color, emoji = "Good",      "#2563EB", "🔵"
-    elif r2 >= 0.50 and mape <= 35:
+    elif r2 >= 0.45 and mape <= 30:
         grade, color, emoji = "Fair",      "#D97706", "🟡"
     else:
         grade, color, emoji = "Poor",      "#DC2626", "🔴"
@@ -165,18 +181,3 @@ def meets_production_threshold(metrics: dict) -> tuple[bool, str]:
 
 def _zero_metrics() -> dict:
     return {"mape": 0.0, "rmse": 0.0, "mae": 0.0, "r2_score": 0.0}
-
-"""
-services/accuracy_service.py
-=============================
-Standalone accuracy / evaluation service.
-
-Centralises all model-performance calculations so:
-  - The dashboard can call it independently of the forecaster
-  - The real XGBoost/RF models can plug in their own metrics later
-  - Tests can import this without touching the ML layer
-
-Internally delegates to BaseForecaster.calculate_accuracy_metrics()
-for the actual maths, but also adds higher-level helpers (grade labels,
-comparison between two models, threshold checks).
-"""
