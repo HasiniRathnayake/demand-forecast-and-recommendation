@@ -1,9 +1,13 @@
+from __future__ import annotations
 """
+ui/components/historical_tab.py
+================================
+Tab 2 — Historical Analysis
 Renders: sales trend, distribution histogram, day-of-week averages,
          monthly heatmap, and summary statistics.
+Charts are stacked vertically for readability.
+Sales trend shows last 90 days only to keep it clear.
 """
-
-from __future__ import annotations
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -25,27 +29,20 @@ def render_historical_tab(hist_df: pd.DataFrame, product: dict) -> None:
         st.error("Unexpected data format: 'quantity_sold' column is missing.")
         return
 
-    # ── Row 1: Trend + Distribution ────────────────────────────────────────────
-    col1, col2 = st.columns([2, 1])
+    # ── Charts stacked vertically for readability ──────────────────────────────
+    # Trend chart uses last 90 days only to keep it clear and uncluttered
+    trend_df = hist_df.tail(90).copy()
+    fig_trend = _build_trend_chart(trend_df)
+    st.plotly_chart(fig_trend, use_container_width=True, config={"displaylogo": False})
 
-    with col1:
-        fig_trend = _build_trend_chart(hist_df)
-        st.plotly_chart(fig_trend, use_container_width=True, config={"displaylogo": False})
+    fig_hist = _build_distribution_chart(hist_df)
+    st.plotly_chart(fig_hist, use_container_width=True, config={"displaylogo": False})
 
-    with col2:
-        fig_hist = _build_distribution_chart(hist_df)
-        st.plotly_chart(fig_hist, use_container_width=True, config={"displaylogo": False})
+    fig_dow = _build_day_of_week_chart(hist_df)
+    st.plotly_chart(fig_dow, use_container_width=True, config={"displaylogo": False})
 
-    # ── Row 2: Day-of-week + Monthly trend ────────────────────────────────────
-    col3, col4 = st.columns(2)
-
-    with col3:
-        fig_dow = _build_day_of_week_chart(hist_df)
-        st.plotly_chart(fig_dow, use_container_width=True, config={"displaylogo": False})
-
-    with col4:
-        fig_monthly = _build_monthly_chart(hist_df)
-        st.plotly_chart(fig_monthly, use_container_width=True, config={"displaylogo": False})
+    fig_monthly = _build_monthly_chart(hist_df)
+    st.plotly_chart(fig_monthly, use_container_width=True, config={"displaylogo": False})
 
     # ── Summary statistics ─────────────────────────────────────────────────────
     st.markdown('<div class="section-title">📈 Historical Statistics</div>', unsafe_allow_html=True)
@@ -60,7 +57,7 @@ def _build_trend_chart(hist_df: pd.DataFrame) -> go.Figure:
         hist_df,
         x="transaction_date",
         y="quantity_sold",
-        title=f"Sales Trend (Last {days} Days)",
+        title=f"Sales Trend — Last {days} Days",
         labels={"quantity_sold": "Units Sold", "transaction_date": "Date"},
     )
     fig.update_traces(line_color="#3B82F6", line_width=2)
@@ -128,11 +125,18 @@ def _build_day_of_week_chart(hist_df: pd.DataFrame) -> go.Figure:
         go.Bar(
             x=weekly.index,
             y=weekly["mean"],
-            error_y=dict(type="data", array=weekly["std"].values, visible=True),
+            error_y=dict(
+                type="data",
+                array=weekly["std"].values,
+                visible=True,
+                color="#64748B",       # slate-500 — visible on both dark & light
+                thickness=2,
+                width=6,
+            ),
             marker_color=colors,
-            marker_line_color="white",
+            marker_line_color="rgba(0,0,0,0)",
             marker_line_width=1,
-            hovertemplate="<b>%{x}</b><br>Avg: %{y:.1f} units<extra></extra>",
+            hovertemplate="<b>%{x}</b><br>Avg: %{y:.1f} units<br>Std: %{error_y.array:.1f}<extra></extra>",
         )
     )
     fig.update_layout(
@@ -193,9 +197,8 @@ def _render_stats(hist_df: pd.DataFrame) -> None:
     c4.metric("Std Dev",    f"{sales.std():.1f}")
     c5.metric("Total",      f"{sales.sum():,.0f}")
 
-    # Promotion lift (if column exists)
     if "is_promotion" in hist_df.columns:
-        promo = hist_df[hist_df["is_promotion"] == True]["quantity_sold"]
+        promo    = hist_df[hist_df["is_promotion"] == True]["quantity_sold"]
         no_promo = hist_df[hist_df["is_promotion"] == False]["quantity_sold"]
         if not promo.empty and not no_promo.empty:
             lift = ((promo.mean() - no_promo.mean()) / no_promo.mean()) * 100

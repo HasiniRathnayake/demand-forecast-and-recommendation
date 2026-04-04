@@ -2,6 +2,7 @@
 config/settings.py
 ==================
 App-wide constants, category config, weather config, and model settings.
+Centralised here so any change only needs to happen once.
 """
 
 import os
@@ -27,7 +28,7 @@ SUPPORTED_CATEGORIES: list[str] = [
 ]
 
 # ── Forecasting defaults ───────────────────────────────────────────────────────
-DEFAULT_HISTORY_DAYS: int = 90
+DEFAULT_HISTORY_DAYS: int = 730  # covers full client dataset (2024-2025)
 DEFAULT_FORECAST_DAYS: int = 14
 MIN_FORECAST_DAYS: int = 7
 MAX_FORECAST_DAYS: int = 30
