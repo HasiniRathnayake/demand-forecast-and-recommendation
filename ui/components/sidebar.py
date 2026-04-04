@@ -1,5 +1,6 @@
 """
-
+ui/components/sidebar.py
+=========================
 Sidebar rendering: category filter, product selector, product details,
 weather widget, and forecast settings.
 Returns the selected product dict and forecast settings.
@@ -108,10 +109,10 @@ def render_sidebar() -> tuple[dict | None, dict]:
         )
         history_days = st.select_slider(
             "History Window (days)",
-            options=[30, 60, 90],
-            value=DEFAULT_HISTORY_DAYS,
+            options=[90, 180, 365, 500, 730],
+            value=730,
             key="sb_history_days",
-            help="How many past days of sales data to analyse.",
+            help="How many past days of sales data to use for forecasting.",
         )
         show_confidence = st.toggle("Show Confidence Interval", value=True, key="sb_conf")
         show_weather = st.toggle("Show Weather Impact", value=True, key="sb_weather")
