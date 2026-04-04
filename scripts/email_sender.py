@@ -26,11 +26,8 @@ class EmailSender:
         name         = offer['customer_name']
         offer_text   = offer['offer_text']
         discount_pct = offer['discount_pct']
-<<<<<<< HEAD
-=======
         promo_start  = offer.get('promo_start')
         promo_end    = offer.get('promo_end')
->>>>>>> origin/main
         friendly_segments = {
             'VIP Customer':     'VIP Member',
             'High Value':       'Valued Member',
@@ -42,14 +39,11 @@ class EmailSender:
         }
         segment = friendly_segments.get(offer['segment'], 'Loyalty Member')
         recommended  = offer['recommended']
-<<<<<<< HEAD
-=======
         validity_line = (
             f"Use at checkout — valid from {promo_start} to {promo_end}"
             if promo_start and promo_end else
             "Use at checkout — valid this week only"
         )
->>>>>>> origin/main
 
         # Build product cards
         product_rows = ""
@@ -91,11 +85,7 @@ class EmailSender:
                     <!-- Offer Badge -->
                     <div style="background:#fff3cd;border:2px dashed #f39c12;border-radius:10px;padding:20px;text-align:center;margin:20px 0;">
                         <h2 style="color:#e67e22;margin:0;font-size:32px;">🎉 {offer_text}</h2>
-<<<<<<< HEAD
-                        <p style="color:#888;margin:8px 0 0;">Use at checkout — valid this week only</p>
-=======
                         <p style="color:#888;margin:8px 0 0;">{validity_line}</p>
->>>>>>> origin/main
                     </div>
 
                     <!-- Recommended Products -->
@@ -145,8 +135,6 @@ class EmailSender:
         except Exception as e:
             return False, str(e)
 
-<<<<<<< HEAD
-=======
     def queue_scheduled_emails(self, offers, send_date, test_mode=False):
         """Queue emails for future sending in email_log with status='scheduled'."""
         queued = 0
@@ -299,7 +287,6 @@ class EmailSender:
             'results': results,
         }
 
->>>>>>> origin/main
     def log_email(self, customer_id, email_type, subject, html_content, status, segment=None):
         """Save email record to email_log table with simulated engagement"""
         import random
@@ -338,17 +325,6 @@ class EmailSender:
         """, [customer_id, email_type, subject, html_content,
               delivery_status, opened, clicked])
         print(f"DEBUG: Log result = {result}")
-<<<<<<< HEAD
-        
-        self.db.execute_query("""
-            INSERT INTO email_log
-            (customer_id, email_type, subject, email_content,
-             sent_date, delivery_status, opened, clicked)
-            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, %s, %s, %s)
-        """, [customer_id, email_type, subject, html_content,
-              delivery_status, opened, clicked])
-=======
->>>>>>> origin/main
 
     def send_promotional_emails(self, offers, test_mode=False):
         sent    = 0

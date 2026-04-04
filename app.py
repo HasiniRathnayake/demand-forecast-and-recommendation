@@ -33,6 +33,7 @@ elif page == "demand_forecast":
     from ui.components.sidebar import render_sidebar
     from ui.components.forecast_tab import render_forecast_tab
     from ui.components.historical_tab import render_historical_tab
+    from ui.components.data_tab import render_data_tab
     from services.forecast_service import run_forecast
     from services.auth_service import get_current_user, logout
     from config.settings import APP_TITLE, APP_SUBTITLE
