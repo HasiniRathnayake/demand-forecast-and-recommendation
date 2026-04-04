@@ -389,8 +389,13 @@ def show_customer_dashboard(customer_id):
                 )
         else:
             st.markdown(
+
+                '<div class="alert-info">No promotions yet — '
+                'check back soon for exclusive offers!</div>',
+
                 '<div class="alert-info">No active promotions right now — '
                 'check back soon for fresh offers!</div>',
+
                 unsafe_allow_html=True
             )
 

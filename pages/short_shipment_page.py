@@ -863,48 +863,17 @@ def render_short_shipment():
         else:
             st.success(f"✅ Found {len(suppliers_df)} suppliers and {len(products_df)} products")
 
-            # --- START INTEGRATION ---
-            pending_pos_df = get_pending_purchase_orders()
-            pending_options = ["— Manual Entry —"]
-            if not pending_pos_df.empty:
-                for _, po in pending_pos_df.iterrows():
-                    pending_options.append(f"PO: {str(po['po_id'])[:8].upper()} - {po['supplier_name']}")
-
-            st.markdown("##### 🔗 Connect to Auto-PO")
-            selected_po_label = st.selectbox("Select Pending Purchase Order", options=pending_options)
-            
-            is_auto = selected_po_label != "— Manual Entry —"
-            auto_po = None
-            if is_auto:
-                idx = pending_options.index(selected_po_label) - 1
-                auto_po = pending_pos_df.iloc[idx]
-            st.markdown("---")
-            # --- END INTEGRATION ---
-
             col_f1, col_f2 = st.columns(2)
             with col_f1:
-                default_order_num = str(auto_po['po_id']) if is_auto else ""
-                order_num = st.text_input("Order/Invoice Number *", value=default_order_num, disabled=is_auto)
-                
+                order_num = st.text_input("Order/Invoice Number *")
                 supplier_names = suppliers_df['supplier_name'].tolist()
-                default_sup_idx = supplier_names.index(auto_po['supplier_name']) if is_auto and auto_po['supplier_name'] in supplier_names else 0
-                supplier = st.selectbox("Supplier *", supplier_names, index=default_sup_idx, disabled=is_auto)
+                supplier = st.selectbox("Supplier *", supplier_names)
                 del_date = st.date_input("Delivery Date", value=date.today())
             with col_f2:
                 product_names = products_df['product_name'].tolist()
-                
-                default_prod_idx = 0
-                if is_auto:
-                    code_match = products_df[products_df['product_code'] == auto_po['product_code']]
-                    if not code_match.empty:
-                        prod_name = code_match.iloc[0]['product_name']
-                        if prod_name in product_names:
-                            default_prod_idx = product_names.index(prod_name)
-                
-                product = st.selectbox("Product *", product_names, index=default_prod_idx, disabled=is_auto)
-                default_qty = int(auto_po['ordered_qty']) if is_auto else 100
-                ordered_qty = st.number_input("Ordered Quantity", min_value=0, value=default_qty, disabled=is_auto)
-                received_qty = st.number_input("Received Quantity", min_value=0, value=default_qty if is_auto else 100, step=10)
+                product = st.selectbox("Product *", product_names)
+                ordered_qty = st.number_input("Ordered Quantity", min_value=0, value=100, step=10)
+                received_qty = st.number_input("Received Quantity", min_value=0, value=100, step=10)
 
             disc_qty = received_qty - ordered_qty
             disc_pct = (disc_qty / ordered_qty * 100) if ordered_qty > 0 else 0
@@ -999,6 +968,23 @@ def render_short_shipment():
 
                     except Exception as e:
                         st.error(f"Error saving delivery: {e}")
+                            # =========================================================
+    # FUNCTION: Calculate compensation for next order (UPDATED)
+    # =========================================================
+    def calculate_next_order_adjustment(supplier_data):
+        """Calculate how to adjust next order to compensate - INCLUDES ALL SUPPLIERS"""
+        
+        if supplier_data.empty:
+            return None
+
+        # Group by supplier AND product to calculate cumulative shortages
+        product_summary = supplier_data.groupby(['supplier', 'product_code', 'product']).agg({
+            'ordered': 'sum',
+            'received': 'sum',
+            'discrepancy_qty': 'sum',
+            'financial_impact': 'sum',
+            'unit_price': 'first'
+        }).reset_index()
 
             st.markdown("---")
             st.markdown("#### 🗂️ Saved Delivery Drafts")
@@ -1023,7 +1009,7 @@ def render_short_shipment():
                 st.dataframe(view_df, use_container_width=True, hide_index=True)
 
     # =========================================================
-    # TAB 3: ORDER RECONCILIATION
+    # TAB 2: RECORD DELIVERY (continued)
     # =========================================================
     with tab3:
         st.markdown('<div class="section-title">📊 Order vs Received Reconciliation</div>', unsafe_allow_html=True)
@@ -1063,29 +1049,39 @@ def render_short_shipment():
             st.markdown("## 📋 Reconciliation Table")
             st.dataframe(pd.DataFrame(columns=recon_columns), use_container_width=True, hide_index=True)
         else:
-            # =========================================================
-            # SECTION 1: SUMMARY CARDS (ADD THIS)
-            # =========================================================
-            st.markdown("## 📊 Discrepancy Summary")
-
-            total_ordered = rec_df['ordered'].sum()
-            total_received = rec_df['received'].sum()
-            total_discrepancy = total_received - total_ordered
-            total_financial = rec_df['financial_impact'].sum()
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            with col1:
-                st.metric("Total Ordered", f"{total_ordered:,.0f} units")
-            with col2:
-                st.metric("Total Received", f"{total_received:,.0f} units")
-            with col3:
-                st.metric("Net Discrepancy", f"{total_discrepancy:+,.0f} units",
-                          delta=f"{total_discrepancy:+,.0f}")
-            with col4:
-                st.metric("Financial Impact", f"LKR {total_financial:+,.2f}",
-                          delta=f"LKR {total_financial:+,.2f}",
-                          delta_color="inverse")
+            # SQLite version
+            try:
+                db_conn = sqlite3.connect('supermarket.db')
+                query = """
+                    SELECT 
+                        d.delivery_date as Date,
+                        d.order_number as 'Invoice #',
+                        s.supplier_name as Supplier,
+                        p.product_name as Product,
+                        d.ordered_quantity as Ordered,
+                        d.received_quantity as Received,
+                        d.discrepancy_quantity as Variance,
+                        CASE 
+                            WHEN d.discrepancy_quantity < 0 THEN '⚠️ Short '
+                            WHEN d.discrepancy_quantity > 0 THEN '📦 Over'
+                            ELSE '✅ OK'
+                        END as Status
+                    FROM deliveries d
+                    LEFT JOIN suppliers s ON d.supplier_id = s.supplier_id
+                    LEFT JOIN product_catalog p ON d.product_code = p.product_code
+                    ORDER BY d.delivery_date DESC
+                    LIMIT 20
+                """
+                recent_df = pd.read_sql_query(query, db_conn)
+                db_conn.close()
+                
+                if not recent_df.empty:
+                    st.dataframe(recent_df, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No deliveries recorded yet.")
+                    
+            except Exception as e:
+                st.info(f"Unable to load recent deliveries: {e}")
 
             # =========================================================
             # SECTION 2: ORDER RECONCILIATION TABLE
@@ -1148,36 +1144,231 @@ def render_short_shipment():
             # =========================================================
             st.markdown("## 🏭 Supplier Reconciliation")
 
-            adjustments_df = calculate_next_order_adjustment(filtered_df)
+        if supplier_data.empty:
+            return None
 
-            if adjustments_df is not None and not adjustments_df.empty:
-                st.markdown("### 📋 Recommended Next Order Adjustments")
+        # Group by supplier and product to calculate cumulative shortages
+        product_summary = supplier_data.groupby(['supplier', 'product_code', 'product']).agg({
+            'ordered': 'sum',
+            'received': 'sum',
+            'discrepancy_qty': 'sum',
+            'financial_impact': 'sum',
+            'unit_price': 'first'
+        }).reset_index()
 
-                display_adjustments = adjustments_df[[
-                    'product', 'cumulative_shortage', 'cumulative_overage',
-                    'net_position', 'adjustment_type', 'action'
-                ]].copy()
+        adjustments = []
 
-                display_adjustments.columns = [
-                    'Product', 'Cumulative Short', 'Cumulative Over',
-                    'Net Position', 'Adjustment Type', 'Recommended Action'
-                ]
+        for _, row in product_summary.iterrows():
+            cumulative_shortage = abs(row['discrepancy_qty']) if row['discrepancy_qty'] < 0 else 0
+            cumulative_overage = row['discrepancy_qty'] if row['discrepancy_qty'] > 0 else 0
 
-                st.dataframe(display_adjustments, use_container_width=True)
-
-                total_shortage = adjustments_df['cumulative_shortage'].sum()
-                total_credit = adjustments_df['cumulative_overage'].sum()
-
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.info(f"📦 **Total Shortage to Compensate:** {total_shortage:,.0f} units")
-                with col2:
-                    st.success(f"💰 **Total Credit Available:** {total_credit:,.0f} units")
-                with col3:
-                    net_adjustment = total_shortage - total_credit
-                    if net_adjustment > 0:
-                        st.warning(f"⚖️ **Net Additional Needed:** {net_adjustment:,.0f} units")
-                    else:
-                        st.success(f"⚖️ **Net Credit Available:** {abs(net_adjustment):,.0f} units")
+            if cumulative_shortage > 0:
+                adjustment = {
+                    'supplier': row['supplier'],  # ADDED supplier column
+                    'product': row['product'],
+                    'product_code': row['product_code'],
+                    'cumulative_shortage': cumulative_shortage,
+                    'cumulative_overage': cumulative_overage,
+                    'net_position': -cumulative_shortage + cumulative_overage,
+                    'adjustment_type': 'Add to Next Order',
+                    'adjustment_qty': cumulative_shortage,
+                    'financial_impact': row['financial_impact'],
+                    'reason': f"Short by {cumulative_shortage:,.0f} units across deliveries",
+                    'action': f"📦 Add {cumulative_shortage:,.0f} extra units to next order"
+                }
+            elif cumulative_overage > 0:
+                adjustment = {
+                    'supplier': row['supplier'],  # ADDED supplier column
+                    'product': row['product'],
+                    'product_code': row['product_code'],
+                    'cumulative_shortage': 0,
+                    'cumulative_overage': cumulative_overage,
+                    'net_position': cumulative_overage,
+                    'adjustment_type': 'Credit for Next Order',
+                    'adjustment_qty': cumulative_overage,
+                    'financial_impact': row['financial_impact'],
+                    'reason': f"Over by {cumulative_overage:,.0f} units across deliveries",
+                    'action': f"💰 Credit {cumulative_overage:,.0f} units for next order"
+                }
             else:
-                st.info("No adjustments needed for the selected supplier(s)")
+                adjustment = {
+                    'supplier': row['supplier'],  # ADDED supplier column
+                    'product': row['product'],
+                    'product_code': row['product_code'],
+                    'cumulative_shortage': 0,
+                    'cumulative_overage': 0,
+                    'net_position': 0,
+                    'adjustment_type': 'No Adjustment',
+                    'adjustment_qty': 0,
+                    'financial_impact': 0,
+                    'reason': "All deliveries accurate",
+                    'action': "✅ No adjustment needed"
+                }
+
+            adjustments.append(adjustment)
+
+        return pd.DataFrame(adjustments)
+    
+     
+        # =========================================================
+    # TAB 3: ORDER RECONCILIATION (Clean - Only Adjustments)
+    # =========================================================
+    with tab3:
+        st.markdown('<div class="section-title">📦 Next Order Adjustments</div>', unsafe_allow_html=True)
+        st.markdown("Automatically calculate what to add or credit in your next purchase order")
+        
+        # =========================================================
+        # Date Range Selector with Validation
+        # =========================================================
+        col1, col2 = st.columns(2)
+        
+        today_date = date.today()
+        
+        with col1:
+            rec_start_date = st.date_input(
+                "📅 From Date", 
+                value=today_date - timedelta(days=90), 
+                key="rec_start",
+                max_value=today_date
+            )
+        
+        with col2:
+            rec_end_date = st.date_input(
+                "📅 To Date", 
+                value=today_date, 
+                key="rec_end",
+                max_value=today_date
+            )
+        
+        # Date Validation
+        date_error = None
+        if rec_start_date > rec_end_date:
+            date_error = "❌ Start date cannot be after end date"
+        elif rec_end_date > today_date:
+            date_error = "❌ End date cannot be in the future"
+        elif rec_start_date > today_date:
+            date_error = "❌ Start date cannot be in the future"
+        
+        if date_error:
+            st.error(date_error)
+            st.stop()
+        
+        # =========================================================
+        # Load data with validated dates
+        # =========================================================
+        rec_df = get_delivery_data_for_reconciliation(rec_start_date, rec_end_date)
+        
+        if rec_df.empty:
+            st.warning("⚠️ No delivery data found for the selected period.")
+            st.info("📝 Please record deliveries first in the 'Record Delivery' tab.")
+        else:
+            # =========================================================
+            # Show Filter Only (Single instance - FIXED)
+            # =========================================================
+            show_only = st.selectbox(
+                "🔍 Show",
+                ["All Adjustments", "Only Shortages", "Only Credits", "No Adjustment Needed"],
+                key="rec_show_filter"
+            )
+            
+            # Calculate adjustments for ALL suppliers
+            adjustments_df = calculate_next_order_adjustment(rec_df)
+            
+            if adjustments_df is None or adjustments_df.empty:
+                st.info("No adjustments needed")
+            else:
+                # Apply show filter
+                if show_only == "Only Shortages":
+                    adjustments_df = adjustments_df[adjustments_df['cumulative_shortage'] > 0]
+                elif show_only == "Only Credits":
+                    adjustments_df = adjustments_df[adjustments_df['cumulative_overage'] > 0]
+                elif show_only == "No Adjustment Needed":
+                    adjustments_df = adjustments_df[adjustments_df['adjustment_qty'] == 0]
+                
+                if adjustments_df.empty:
+                    st.info(f"No {show_only.lower()} found")
+                else:
+                    # =========================================================
+                    # ADJUSTMENTS TABLE
+                    # =========================================================
+                    st.markdown("## 📋 Recommended Adjustments for Next Order")
+                    
+                    # Prepare display table
+                    display_adjustments = adjustments_df[[
+                        'supplier', 'product', 'cumulative_shortage', 'cumulative_overage', 
+                        'net_position', 'adjustment_type', 'action', 'reason'
+                    ]].copy()
+                    
+                    display_adjustments.columns = [
+                        'Supplier', 'Product', 'Shortage (units)', 'Credit (units)', 
+                        'Net Position', 'Type', 'Action', 'Reason'
+                    ]
+                    
+                    # Color code rows
+                    def color_adjustment_rows(row):
+                        if 'Add to Next Order' in row['Type']:
+                            return ['background-color: #ffcccc'] * len(row)
+                        elif 'Credit' in row['Type']:
+                            return ['background-color: #ccffcc'] * len(row)
+                        return [''] * len(row)
+                    
+                    st.dataframe(
+                        display_adjustments.style.apply(color_adjustment_rows, axis=1),
+                        use_container_width=True,
+                        height=400
+                    )
+                    
+                    # =========================================================
+                    # VISUAL SUMMARY (Charts Only)
+                    # =========================================================
+                    st.markdown("---")
+                    st.markdown("## 📊 Adjustment Summary")
+                    
+                    col_chart1, col_chart2 = st.columns(2)
+                    
+                    with col_chart1:
+                        # Bar chart - Top adjustments by product
+                        chart_data = adjustments_df[adjustments_df['adjustment_qty'] > 0].copy()
+                        if not chart_data.empty:
+                            chart_data = chart_data.sort_values('adjustment_qty', ascending=True).tail(10)
+                            fig = px.bar(
+                                chart_data,
+                                x='adjustment_qty',
+                                y='product',
+                                orientation='h',
+                                color='adjustment_type',
+                                title='Top Products Needing Adjustment',
+                                labels={'adjustment_qty': 'Units to Adjust', 'product': 'Product'},
+                                color_discrete_map={
+                                    'Add to Next Order': '#e74c3c',
+                                    'Credit for Next Order': '#2ecc71'
+                                }
+                            )
+                            fig.update_layout(height=400)
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.info("No products need adjustment")
+                    
+                    with col_chart2:
+                        # Donut chart - Adjustment distribution
+                        type_counts = adjustments_df['adjustment_type'].value_counts().reset_index()
+                        type_counts.columns = ['Type', 'Count']
+                        
+                        fig = px.pie(
+                            type_counts,
+                            values='Count',
+                            names='Type',
+                            title='Adjustment Distribution',
+                            hole=0.4,
+                            color='Type',
+                            color_discrete_map={
+                                'Add to Next Order': '#e74c3c',
+                                'Credit for Next Order': '#2ecc71',
+                                'No Adjustment': '#95a5a6'
+                            }
+                        )
+                        fig.update_layout(height=400)
+                        st.plotly_chart(fig, use_container_width=True)
+                    
+                    
+                    

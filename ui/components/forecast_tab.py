@@ -183,7 +183,7 @@ def _build_forecast_chart(
             # Override values as bold stars — one trace per override point
             # so each star renders independently with its own hover text
             for ov_d, ov_v, ov_r in zip(ov_dates, ov_vals, ov_reasons):
-                fig.add_trace(go.Scatter(
+                fig.add_trace(
                     x=[ov_d],
                     y=[ov_v],
                     mode="markers+text",
@@ -203,7 +203,7 @@ def _build_forecast_chart(
                         f"Reason: {ov_r or 'Manual override'}"
                         "<extra>Manual Override</extra>"
                     ),
-                ))
+                )
             # Add one invisible trace just for the legend entry
             fig.add_trace(go.Scatter(
                 x=[None], y=[None],
