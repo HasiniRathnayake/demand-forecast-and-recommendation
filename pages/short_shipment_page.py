@@ -2,35 +2,159 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 from datetime import datetime, date, timedelta
 import numpy as np
-import matplotlib.pyplot as plt
 import sqlite3
-import re
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-
+import sys
+import os
 
 # =========================================================
-# DATE VALIDATION FUNCTION
+# HELPER FUNCTIONS (OUTSIDE render_short_shipment)
 # =========================================================
+def init_delivery_draft_table():
+    db_conn = sqlite3.connect('supermarket.db')
+    cursor = db_conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS delivery_drafts (
+            draft_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            order_number TEXT,
+            supplier_name TEXT,
+            product_name TEXT,
+            ordered_quantity REAL,
+            received_quantity REAL,
+            discrepancy_quantity REAL,
+            discrepancy_percentage REAL,
+            delivery_date TEXT,
+            source_type TEXT
+        )
+    ''')
+    db_conn.commit()
+    db_conn.close()
+
+def get_delivery_drafts(limit=50):
+    db_conn = sqlite3.connect('supermarket.db')
+    query = """
+        SELECT draft_id, created_at, order_number, supplier_name, product_name,
+               ordered_quantity, received_quantity, discrepancy_quantity,
+               discrepancy_percentage, delivery_date, source_type
+        FROM delivery_drafts ORDER BY draft_id DESC LIMIT ?
+    """
+    drafts_df = pd.read_sql_query(query, db_conn, params=[limit])
+    db_conn.close()
+    return drafts_df
+
+def save_delivery_draft(order_number, supplier_name, product_name, ordered_qty, received_qty, delivery_date, source_type):
+    disc_qty = float(received_qty) - float(ordered_qty)
+    disc_pct = (disc_qty / float(ordered_qty) * 100) if float(ordered_qty) > 0 else 0.0
+
+    db_conn = sqlite3.connect('supermarket.db')
+    cursor = db_conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO delivery_drafts (
+            order_number, supplier_name, product_name,
+            ordered_quantity, received_quantity,
+            discrepancy_quantity, discrepancy_percentage,
+            delivery_date, source_type
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            str(order_number),
+            str(supplier_name),
+            str(product_name),
+            float(ordered_qty),
+            float(received_qty),
+            float(disc_qty),
+            float(round(disc_pct, 1)),
+            str(delivery_date),
+            str(source_type),
+        ),
+    )
+    db_conn.commit()
+    db_conn.close()
+
+def get_pending_purchase_orders():
+    try:
+        from modules.short_shipment_detector.database import get_db_connection
+        conn = get_db_connection()
+        
+        po_response = conn.table("purchase_orders")\
+            .select("po_id, replenishment_order_id, supplier_id, status")\
+            .in_("status", ["SENT", "PENDING_DISPATCH"])\
+            .execute()
+        
+        if not po_response.data:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(po_response.data)
+        
+        suppliers_response = conn.table("suppliers").select("supplier_id, supplier_name").execute()
+        if suppliers_response.data:
+            suppliers_df = pd.DataFrame(suppliers_response.data)
+            df = df.merge(suppliers_df, left_on='supplier_id', right_on='supplier_id', how='left')
+            df['supplier_name'] = df['supplier_name'].fillna('Unknown')
+        
+        rep_ids = df['replenishment_order_id'].dropna().tolist()
+        
+        if rep_ids:
+            rep_response = conn.table("replenishment_orders")\
+                .select("order_id, product_code, suggested_qty")\
+                .in_("order_id", rep_ids)\
+                .execute()
+            
+            if rep_response.data:
+                rep_df = pd.DataFrame(rep_response.data)
+                rep_df.rename(columns={'order_id': 'replenishment_order_id', 'suggested_qty': 'ordered_qty'}, inplace=True)
+                df = df.merge(rep_df, on='replenishment_order_id', how='left')
+                
+                product_codes = df['product_code'].dropna().unique().tolist()
+                if product_codes:
+                    prod_response = conn.table("product_catalog")\
+                        .select("product_code, product_name")\
+                        .in_("product_code", product_codes)\
+                        .execute()
+                    
+                    if prod_response.data:
+                        prod_df = pd.DataFrame(prod_response.data)
+                        df = df.merge(prod_df, on='product_code', how='left')
+                        df['product_name'] = df['product_name'].fillna('Unknown')
+                    else:
+                        df['product_name'] = 'Unknown'
+                else:
+                    df['product_name'] = 'Unknown'
+            else:
+                df['product_name'] = 'Unknown'
+                df['ordered_qty'] = 0
+        else:
+            df['product_name'] = 'Unknown'
+            df['ordered_qty'] = 0
+        
+        df['ordered_qty'] = df['ordered_qty'].fillna(0).astype(int)
+        return df
+        
+    except Exception as e:
+        st.error(f"Error fetching POs: {e}")
+        return pd.DataFrame()
+
 def validate_dates(start_date, end_date):
     errors = []
     if start_date > end_date:
-        errors.append("❌ Start date cannot be after end date")
+        errors.append("Start date cannot be after end date")
     if (end_date - start_date).days > 365:
-        errors.append("⚠️ Date range exceeds 365 days")
+        errors.append("Date range exceeds 365 days")
     today = date.today()
     if start_date > today:
-        errors.append("⚠️ Start date cannot be in the future")
+        errors.append("Start date cannot be in the future")
     if end_date > today:
-        errors.append("⚠️ End date cannot be in the future")
+        errors.append("End date cannot be in the future")
     if (end_date - start_date).days < 1:
-        errors.append("⚠️ Date range must be at least 1 day")
+        errors.append("Date range must be at least 1 day")
     return len(errors) == 0, errors
 
+def ensure_sample_data():
+    return True
 
 def send_supplier_alert_outlook(supplier_email, supplier_name, alert_type, details):
     """Send email using Outlook/Hotmail"""
@@ -97,31 +221,88 @@ from modules.short_shipment_detector.utils import (
 )
 
 
+# =========================================================
+# MAIN RENDER FUNCTION
+# =========================================================
 def render_short_shipment():
     """Wrapper that renders short shipment module inside shared app"""
 
     from modules.short_shipment_detector.database import (
         get_db_connection, init_database,
-        add_sample_data, get_suppliers_sqlite, get_products_sqlite
+        get_suppliers_sqlite, get_products_sqlite
     )
-
+    
     init_database()
+    init_delivery_draft_table()
     detector = ShortShipmentDetector()
-
-    def is_supabase(conn):
-        return hasattr(conn, 'table') and callable(getattr(conn, 'table'))
-
-    def is_sqlite(conn):
-        return hasattr(conn, 'cursor') and hasattr(conn, 'execute')
-
+    
     conn = get_db_connection()
-    conn_type = "supabase" if is_supabase(conn) else "sqlite" if is_sqlite(conn) else "unknown"
-
+    conn_type = "supabase" if hasattr(conn, 'table') else "sqlite"
+    
     # =========================================================
-    # Function to get products from product_catalog
+    # PAGE STYLING
     # =========================================================
+    st.markdown("""
+        <style>
+        .main-title {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-align: center;
+            margin-bottom: 0.5rem;
+        }
+        .subtitle {
+            text-align: center;
+            color: #6c757d;
+            margin-bottom: 2rem;
+        }
+        .section-header {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: #2c3e50;
+            border-left: 4px solid #667eea;
+            padding-left: 12px;
+            margin: 20px 0 15px 0;
+        }
+        div[data-testid="stMetric"] {
+            background: linear-gradient(135deg, #f5f7fa 0%, #e4e8f0 100%);
+            border-radius: 10px;
+            padding: 10px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        .success-message {
+            background-color: #d4edda;
+            color: #155724;
+            padding: 10px;
+            border-radius: 8px;
+            border-left: 4px solid #28a745;
+            margin: 10px 0;
+        }
+        .info-message {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            padding: 10px;
+            border-radius: 8px;
+            border-left: 4px solid #17a2b8;
+            margin: 10px 0;
+        }
+        .footer {
+            text-align: center;
+            padding: 15px;
+            margin-top: 20px;
+            color: #6c757d;
+            font-size: 0.75rem;
+            border-top: 1px solid #dee2e6;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="main-title">📦 Short Shipment Detection System</div>', unsafe_allow_html=True)
+    st.markdown('<div class="subtitle">Track discrepancies between ordered and received quantities</div>', unsafe_allow_html=True)
+    
     def get_products_from_catalog():
-        """Fetch products from client's product_catalog table"""
         try:
             if conn_type == "supabase":
                 response = conn.table("product_catalog").select("*").order("product_name").execute()
@@ -134,36 +315,26 @@ def render_short_shipment():
         except Exception as e:
             st.error(f"Error fetching products: {e}")
             return pd.DataFrame()
-
-    # =========================================================
-    # Function to get deliveries
-    # =========================================================
+    
     def get_deliveries(start_date, end_date):
         try:
             if conn_type == "supabase":
                 start_str = start_date.strftime('%Y-%m-%d')
                 end_str = end_date.strftime('%Y-%m-%d')
 
-                # Get deliveries with items and product info
                 response = conn.table("deliveries")\
                     .select("""
                         delivery_id,
                         invoice_number,
                         delivery_date,
                         supplier_id,
-                        suppliers(
-                            supplier_name
-                        ),
+                        suppliers(supplier_name),
                         delivery_items(
                             delivery_item_id,
                             product_code,
                             billed_quantity,
                             received_quantity,
-                            product_catalog(
-                                product_name,
-                                category,
-                                unit_price
-                            )
+                            product_catalog(product_name, category, unit_price)
                         )
                     """)\
                     .gte("delivery_date", start_str)\
@@ -198,8 +369,6 @@ def render_short_shipment():
                         })
 
                 df = pd.DataFrame(data)
-
-                # Add status
                 if not df.empty:
                     conditions = [
                         abs(df['discrepancy_quantity']) < 0.01,
@@ -208,37 +377,9 @@ def render_short_shipment():
                     ]
                     choices = ['✅ Accurate', '⚠️ Short Shipped', '📦 Over Delivered']
                     df['status'] = np.select(conditions, choices, default='Unknown')
-
                 return df
             else:
-                # SQLite version
-                query = """
-                    SELECT d.delivery_date, d.order_number as invoice_number,
-                           d.product_code, p.product_name, p.category,
-                           p.unit_price as cost_price, d.ordered_quantity,
-                           d.received_quantity, d.discrepancy_quantity,
-                           d.discrepancy_percentage, d.financial_impact,
-                           s.supplier_name
-                    FROM deliveries d
-                    LEFT JOIN product_catalog p ON d.product_code = p.product_code
-                    LEFT JOIN suppliers s ON d.supplier_id = s.supplier_id
-                    WHERE d.delivery_date BETWEEN ? AND ?
-                    ORDER BY d.delivery_date DESC
-                """
-                db_conn = sqlite3.connect('supermarket.db')
-                df = pd.read_sql_query(query, db_conn, params=[start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')])
-                db_conn.close()
-
-                if not df.empty:
-                    conditions = [
-                        abs(df['discrepancy_quantity']) < 0.01,
-                        df['discrepancy_quantity'] < 0,
-                        df['discrepancy_quantity'] > 0
-                    ]
-                    choices = ['✅ Accurate', '⚠️ Short Shipped', '📦 Over Delivered']
-                    df['status'] = np.select(conditions, choices, default='Unknown')
-
-                return df
+                return pd.DataFrame()
         except Exception as e:
             st.error(f"Error fetching deliveries: {e}")
             return pd.DataFrame()
@@ -515,7 +656,6 @@ def render_short_shipment():
     # FUNCTION: Get delivery data for reconciliation
     # =========================================================
     def get_delivery_data_for_reconciliation(start_date, end_date):
-        """Get all deliveries with discrepancy calculations for reconciliation tab"""
         try:
             if conn_type == "supabase":
                 start_str = start_date.strftime('%Y-%m-%d')
@@ -554,7 +694,6 @@ def render_short_shipment():
                         financial_impact = disc_qty * unit_price
 
                         data.append({
-                            'delivery_id': delivery.get('delivery_id'),
                             'date': delivery.get('delivery_date'),
                             'invoice': delivery.get('invoice_number'),
                             'supplier': supplier_name,
@@ -566,7 +705,8 @@ def render_short_shipment():
                             'discrepancy_pct': disc_pct,
                             'unit_price': unit_price,
                             'financial_impact': financial_impact,
-                            'status': 'Short' if disc_qty < 0 else 'Over' if disc_qty > 0 else 'Accurate'
+                            'status': 'Short' if disc_qty < 0 else 'Over' if disc_qty > 0 else 'Accurate',
+                            'source': 'Finalized'
                         })
 
                 df = pd.DataFrame(data)
@@ -615,18 +755,12 @@ def render_short_shipment():
         except Exception as e:
             st.error(f"Error fetching data: {e}")
             return pd.DataFrame()
-
-    # =========================================================
-    # FUNCTION: Calculate compensation for next order
-    # =========================================================
+    
     def calculate_next_order_adjustment(supplier_data):
-        """Calculate how to adjust next order to compensate"""
-
         if supplier_data.empty:
             return None
 
-        # Group by product to calculate cumulative shortages
-        product_summary = supplier_data.groupby(['product_code', 'product']).agg({
+        product_summary = supplier_data.groupby(['supplier', 'product_code', 'product']).agg({
             'ordered': 'sum',
             'received': 'sum',
             'discrepancy_qty': 'sum',
@@ -635,13 +769,13 @@ def render_short_shipment():
         }).reset_index()
 
         adjustments = []
-
         for _, row in product_summary.iterrows():
             cumulative_shortage = abs(row['discrepancy_qty']) if row['discrepancy_qty'] < 0 else 0
             cumulative_overage = row['discrepancy_qty'] if row['discrepancy_qty'] > 0 else 0
 
             if cumulative_shortage > 0:
                 adjustment = {
+                    'supplier': row['supplier'],
                     'product': row['product'],
                     'product_code': row['product_code'],
                     'cumulative_shortage': cumulative_shortage,
@@ -655,6 +789,7 @@ def render_short_shipment():
                 }
             elif cumulative_overage > 0:
                 adjustment = {
+                    'supplier': row['supplier'],
                     'product': row['product'],
                     'product_code': row['product_code'],
                     'cumulative_shortage': 0,
@@ -668,6 +803,7 @@ def render_short_shipment():
                 }
             else:
                 adjustment = {
+                    'supplier': row['supplier'],
                     'product': row['product'],
                     'product_code': row['product_code'],
                     'cumulative_shortage': 0,
@@ -679,34 +815,26 @@ def render_short_shipment():
                     'reason': "All deliveries accurate",
                     'action': "✅ No adjustment needed"
                 }
-
             adjustments.append(adjustment)
 
         return pd.DataFrame(adjustments)
-
-    # Call ensure_sample_data to check/initialize if needed
+    
     ensure_sample_data()
     init_delivery_draft_table()
 
     # =========================================================
     # Navigation Tabs
-    # =========================================================
-    tab1, tab2, tab3 = st.tabs([
-        "📊 Dashboard",
-        "📦 Record Delivery",
-        "🏆 Order Reconciliation"
-    ])
-
+    tab1, tab2, tab3 = st.tabs(["📊 Dashboard", "📦 Record Delivery", "🏆 Order Reconciliation"])
+    
     # =========================================================
     # TAB 1: DASHBOARD
     # =========================================================
-
     with tab1:
-        st.markdown('<div class="section-title">📊 Shipment Dashboard</div>', unsafe_allow_html=True)
-
+        st.markdown('<div class="section-header">📊 Shipment Dashboard</div>', unsafe_allow_html=True)
+        
         col_d1, col_d2 = st.columns(2)
         with col_d1:
-            start_date = st.date_input("From", value=date.today() - timedelta(days=30), key="dash_start")
+            start_date = st.date_input("📅 From Date", value=date.today() - timedelta(days=30), key="dashboard_start_date")
         with col_d2:
             end_date = st.date_input("To", value=date.today(), key="dash_end")
 
@@ -742,8 +870,10 @@ def render_short_shipment():
                     })
                     dashboard_source = "Draft"
 
+        df = get_deliveries(start_date, end_date)
+        
         if df.empty:
-            st.info("No deliveries found. Use 'Record Delivery' tab to add deliveries.")
+            st.info("📭 No deliveries found in the selected date range.")
         else:
             if dashboard_source == "Draft":
                 st.warning("Showing dashboard from saved drafts because no finalized deliveries were found in this period.")
@@ -918,21 +1048,19 @@ def render_short_shipment():
                     st.error("Ordered quantity cannot be zero.")
                 else:
                     try:
-                        selected_supplier = suppliers_df[suppliers_df['supplier_name'] == supplier].iloc[0]
-                        supplier_id = selected_supplier['supplier_id']
-
                         selected_product = products_df[products_df['product_name'] == product].iloc[0]
                         product_code = selected_product['product_code']
                         unit_price = selected_product.get('unit_price', 0)
+                        disc_qty = received_qty - ordered_qty
                         financial_impact = disc_qty * unit_price
-
+                        
                         if conn_type == "supabase":
                             delivery_result = conn.table("deliveries").insert({
                                 "supplier_id": supplier_id,
-                                "invoice_number": order_num,
-                                "delivery_date": del_date.isoformat()
+                                "invoice_number": f"DEL-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                                "delivery_date": delivery_date.isoformat()
                             }).execute()
-
+                            
                             if delivery_result.data:
                                 delivery_id = delivery_result.data[0]['delivery_id']
                                 conn.table("delivery_items").insert({
@@ -949,23 +1077,14 @@ def render_short_shipment():
 
                             st.success("✅ Delivery recorded successfully!")
                             st.balloons()
+                            
+                            # Clear session state
+                            for key in ['auto_supplier', 'auto_product', 'auto_ordered_qty', 'selected_po_id']:
+                                if key in st.session_state:
+                                    del st.session_state[key]
+                            
                             st.rerun()
-                        else:
-                            db_conn = sqlite3.connect('supermarket.db')
-                            cursor = db_conn.cursor()
-                            cursor.execute("""
-                                INSERT INTO deliveries (order_number, supplier_id, product_code, ordered_quantity,
-                                                        received_quantity, delivery_date, discrepancy_quantity,
-                                                        discrepancy_percentage, financial_impact, notes)
-                                VALUES (?,?,?,?,?,?,?,?,?,?)
-                            """, (order_num, supplier_id, product_code, ordered_qty, received_qty,
-                                  del_date.strftime('%Y-%m-%d'), disc_qty, round(disc_pct, 1), financial_impact, ""))
-                            db_conn.commit()
-                            db_conn.close()
-                            st.success("✅ Delivery recorded successfully!")
-                            st.balloons()
-                            st.rerun()
-
+                            
                     except Exception as e:
                         st.error(f"Error saving delivery: {e}")
                             # =========================================================
@@ -1214,70 +1333,28 @@ def render_short_shipment():
     # TAB 3: ORDER RECONCILIATION (Clean - Only Adjustments)
     # =========================================================
     with tab3:
-        st.markdown('<div class="section-title">📦 Next Order Adjustments</div>', unsafe_allow_html=True)
-        st.markdown("Automatically calculate what to add or credit in your next purchase order")
+        st.markdown('<div class="section-header">📊 Order Reconciliation</div>', unsafe_allow_html=True)
         
-        # =========================================================
-        # Date Range Selector with Validation
-        # =========================================================
         col1, col2 = st.columns(2)
-        
-        today_date = date.today()
-        
         with col1:
-            rec_start_date = st.date_input(
-                "📅 From Date", 
-                value=today_date - timedelta(days=90), 
-                key="rec_start",
-                max_value=today_date
-            )
-        
+            rec_start = st.date_input("📅 From Date", value=date.today() - timedelta(days=90), key="recon_start_date")
         with col2:
-            rec_end_date = st.date_input(
-                "📅 To Date", 
-                value=today_date, 
-                key="rec_end",
-                max_value=today_date
-            )
+            rec_end = st.date_input("📅 To Date", value=date.today(), key="recon_end_date")
         
-        # Date Validation
-        date_error = None
-        if rec_start_date > rec_end_date:
-            date_error = "❌ Start date cannot be after end date"
-        elif rec_end_date > today_date:
-            date_error = "❌ End date cannot be in the future"
-        elif rec_start_date > today_date:
-            date_error = "❌ Start date cannot be in the future"
-        
-        if date_error:
-            st.error(date_error)
-            st.stop()
-        
-        # =========================================================
-        # Load data with validated dates
-        # =========================================================
-        rec_df = get_delivery_data_for_reconciliation(rec_start_date, rec_end_date)
+        rec_df = get_delivery_data_for_reconciliation(rec_start, rec_end)
         
         if rec_df.empty:
-            st.warning("⚠️ No delivery data found for the selected period.")
-            st.info("📝 Please record deliveries first in the 'Record Delivery' tab.")
+            st.info("📭 No delivery data found for the selected period.")
         else:
-            # =========================================================
-            # Show Filter Only (Single instance - FIXED)
-            # =========================================================
             show_only = st.selectbox(
-                "🔍 Show",
+                "🔍 Filter Adjustments",
                 ["All Adjustments", "Only Shortages", "Only Credits", "No Adjustment Needed"],
                 key="rec_show_filter"
             )
             
-            # Calculate adjustments for ALL suppliers
             adjustments_df = calculate_next_order_adjustment(rec_df)
             
-            if adjustments_df is None or adjustments_df.empty:
-                st.info("No adjustments needed")
-            else:
-                # Apply show filter
+            if adjustments_df is not None and not adjustments_df.empty:
                 if show_only == "Only Shortages":
                     adjustments_df = adjustments_df[adjustments_df['cumulative_shortage'] > 0]
                 elif show_only == "Only Credits":
@@ -1286,89 +1363,9 @@ def render_short_shipment():
                     adjustments_df = adjustments_df[adjustments_df['adjustment_qty'] == 0]
                 
                 if adjustments_df.empty:
-                    st.info(f"No {show_only.lower()} found")
+                    st.info(f"📭 No {show_only.lower()} found")
                 else:
-                    # =========================================================
-                    # ADJUSTMENTS TABLE
-                    # =========================================================
-                    st.markdown("## 📋 Recommended Adjustments for Next Order")
-                    
-                    # Prepare display table
-                    display_adjustments = adjustments_df[[
-                        'supplier', 'product', 'cumulative_shortage', 'cumulative_overage', 
-                        'net_position', 'adjustment_type', 'action', 'reason'
-                    ]].copy()
-                    
-                    display_adjustments.columns = [
-                        'Supplier', 'Product', 'Shortage (units)', 'Credit (units)', 
-                        'Net Position', 'Type', 'Action', 'Reason'
-                    ]
-                    
-                    # Color code rows
-                    def color_adjustment_rows(row):
-                        if 'Add to Next Order' in row['Type']:
-                            return ['background-color: #ffcccc'] * len(row)
-                        elif 'Credit' in row['Type']:
-                            return ['background-color: #ccffcc'] * len(row)
-                        return [''] * len(row)
-                    
-                    st.dataframe(
-                        display_adjustments.style.apply(color_adjustment_rows, axis=1),
-                        use_container_width=True,
-                        height=400
-                    )
-                    
-                    # =========================================================
-                    # VISUAL SUMMARY (Charts Only)
-                    # =========================================================
-                    st.markdown("---")
-                    st.markdown("## 📊 Adjustment Summary")
-                    
-                    col_chart1, col_chart2 = st.columns(2)
-                    
-                    with col_chart1:
-                        # Bar chart - Top adjustments by product
-                        chart_data = adjustments_df[adjustments_df['adjustment_qty'] > 0].copy()
-                        if not chart_data.empty:
-                            chart_data = chart_data.sort_values('adjustment_qty', ascending=True).tail(10)
-                            fig = px.bar(
-                                chart_data,
-                                x='adjustment_qty',
-                                y='product',
-                                orientation='h',
-                                color='adjustment_type',
-                                title='Top Products Needing Adjustment',
-                                labels={'adjustment_qty': 'Units to Adjust', 'product': 'Product'},
-                                color_discrete_map={
-                                    'Add to Next Order': '#e74c3c',
-                                    'Credit for Next Order': '#2ecc71'
-                                }
-                            )
-                            fig.update_layout(height=400)
-                            st.plotly_chart(fig, use_container_width=True)
-                        else:
-                            st.info("No products need adjustment")
-                    
-                    with col_chart2:
-                        # Donut chart - Adjustment distribution
-                        type_counts = adjustments_df['adjustment_type'].value_counts().reset_index()
-                        type_counts.columns = ['Type', 'Count']
-                        
-                        fig = px.pie(
-                            type_counts,
-                            values='Count',
-                            names='Type',
-                            title='Adjustment Distribution',
-                            hole=0.4,
-                            color='Type',
-                            color_discrete_map={
-                                'Add to Next Order': '#e74c3c',
-                                'Credit for Next Order': '#2ecc71',
-                                'No Adjustment': '#95a5a6'
-                            }
-                        )
-                        fig.update_layout(height=400)
-                        st.plotly_chart(fig, use_container_width=True)
-                    
-                    
-                    
+                    st.markdown("### 📋 Recommended Adjustments for Next Order")
+                    st.dataframe(adjustments_df[['supplier', 'product', 'adjustment_type', 'adjustment_qty', 'reason']], width='stretch')
+
+# This is the END of render_short_shipment - NO CODE AFTER THIS!
