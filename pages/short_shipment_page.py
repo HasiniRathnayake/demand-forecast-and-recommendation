@@ -868,7 +868,7 @@ def render_short_shipment():
         else:
             view_df = drafts_df.copy()
             view_df.columns = ["Draft ID", "Saved At", "Order/Invoice", "Supplier", "Product", "Ordered Qty", "Received Qty", "Variance Qty", "Variance %", "Delivery Date", "Source"]
-            st.dataframe(view_df, width='stretch', hide_index=True)
+            st.dataframe(view_df, use_container_width=True, hide_index=True)
         
         st.markdown("---")
         st.markdown('<div class="footer">Sunrise Supermarket · Short-Shipment Detection System · Real-time Discrepancy Tracking</div>', unsafe_allow_html=True)
