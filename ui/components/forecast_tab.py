@@ -309,8 +309,8 @@ def _render_model_metrics(metrics: dict) -> None:
 
     st.markdown(
         '<div class="alert-info" style="margin-top:.75rem">'
-        '⚠️ <strong>Note:</strong> Metrics are computed on mock/historical data. '
-        'Accuracy will improve once real XGBoost/RF models are trained on client sales data.'
+        '⚠️ <strong>Note:</strong> Model trained on Sunrise Supermarket client sales data (2024–2026). '
+        'R² and other metrics reflect performance on the held-out test set.'
         '</div>',
         unsafe_allow_html=True,
     )
