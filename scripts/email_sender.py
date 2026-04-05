@@ -135,6 +135,119 @@ class EmailSender:
         except Exception as e:
             return False, str(e)
 
+    def build_supplier_po_html(self, po_data):
+        """Build HTML email for purchase order sent to supplier"""
+        supplier_name = po_data.get('supplier_name', 'Valued Partner')
+        po_id = po_data.get('po_id', 'PO-UNKNOWN')
+        product_name = po_data.get('product_name', 'Product')
+        product_code = po_data.get('product_code', 'SKU-UNKNOWN')
+        quantity = po_data.get('quantity', 0)
+        order_date = po_data.get('order_date', datetime.now().strftime('%Y-%m-%d'))
+        expected_delivery = po_data.get('expected_delivery_date', 'To be confirmed')
+        supplier_note = (po_data.get('notes') or '').strip()
+        note_html = (
+            f"""
+                    <h3 style="color:#2c3e50;margin-top:25px;">🗒️ Note from Admin</h3>
+                    <div style="background:#fff7ed;border-left:4px solid #fb923c;border-radius:6px;padding:12px 14px;color:#7c2d12;">
+                        {supplier_note}
+                    </div>
+            """
+            if supplier_note else ""
+        )
+        store_name = "Sunrise Super"
+        
+        html = f"""
+        <html>
+        <body style="font-family:Arial,sans-serif;background:#f5f5f5;margin:0;padding:20px;">
+            <div style="max-width:700px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,0.1);">
+
+                <!-- Header -->
+                <div style="background:linear-gradient(135deg,#1e3c72,#2a5298);padding:30px;text-align:center;color:#fff;">
+                    <h1 style="margin:0;font-size:28px;">📦 Purchase Order</h1>
+                    <p style="margin:8px 0 0;font-size:14px;opacity:0.9;">New Order Received</p>
+                </div>
+
+                <!-- Content -->
+                <div style="padding:30px;">
+                    <p style="color:#333;font-size:16px;">Dear <strong>{supplier_name}</strong>,</p>
+                    <p style="color:#555;">We have a new purchase order for you. Please review the details below and confirm receipt.</p>
+
+                    <!-- PO Details Box -->
+                    <div style="background:#f8f9fa;border-left:4px solid #2a5298;padding:20px;margin:20px 0;border-radius:6px;">
+                        <table style="width:100%;margin:0;">
+                            <tr>
+                                <td style="padding:8px 0;"><strong>PO Number:</strong></td>
+                                <td style="padding:8px 0;text-align:right;"><code style="background:#e8eef7;padding:4px 8px;border-radius:4px;font-weight:bold;">{po_id}</code></td>
+                            </tr>
+                            <tr>
+                                <td style="padding:8px 0;"><strong>Order Date:</strong></td>
+                                <td style="padding:8px 0;text-align:right;">{order_date}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding:8px 0;"><strong>Expected Delivery:</strong></td>
+                                <td style="padding:8px 0;text-align:right;color:#27ae60;font-weight:bold;">{expected_delivery}</td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <!-- Product Details -->
+                    <h3 style="color:#2c3e50;margin-top:25px;margin-bottom:10px;">📋 Order Items</h3>
+                    <table style="width:100%;border-collapse:collapse;border:1px solid #ddd;">
+                        <tr style="background:#2a5298;color:#fff;">
+                            <th style="padding:12px;text-align:left;">Product Code</th>
+                            <th style="padding:12px;text-align:left;">Product Name</th>
+                            <th style="padding:12px;text-align:center;">Quantity</th>
+                        </tr>
+                        <tr style="border-bottom:1px solid #ddd;">
+                            <td style="padding:12px;"><code style="background:#f0f0f0;padding:2px 6px;border-radius:3px;">{product_code}</code></td>
+                            <td style="padding:12px;">{product_name}</td>
+                            <td style="padding:12px;text-align:center;font-weight:bold;font-size:18px;color:#27ae60;">{quantity} units</td>
+                        </tr>
+                    </table>
+
+                    <!-- Instructions -->
+                    <h3 style="color:#2c3e50;margin-top:25px;">📝 Next Steps</h3>
+                    <ol style="color:#555;line-height:1.8;">
+                        <li>Please confirm receipt of this purchase order</li>
+                        <li>Prepare the items for shipment</li>
+                        <li>Ensure delivery by <strong>{expected_delivery}</strong></li>
+                        <li>Include PO number <code>{po_id}</code> on all shipping documents</li>
+                    </ol>
+
+                    {note_html}
+
+                    <!-- Contact -->
+                    <div style="background:#e8f4f8;border-radius:6px;padding:15px;margin-top:25px;border-left:4px solid #3498db;">
+                        <p style="color:#2c3e50;margin:0;"><strong>Questions?</strong></p>
+                        <p style="color:#555;margin:5px 0 0;font-size:14px;">Contact us for any clarifications regarding this order.</p>
+                    </div>
+
+                </div>
+
+                <!-- Footer -->
+                <div style="background:#f8f9fa;padding:20px;text-align:center;border-top:1px solid #eee;">
+                    <p style="color:#888;font-size:12px;margin:0;">
+                        <strong>{store_name}</strong><br>
+                        Automated Purchase Order System<br>
+                        <em>This is an automated message. Please do not reply to this email.</em>
+                    </p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        return html
+
+    def send_supplier_po_email(self, supplier_email, po_data):
+        """Send purchase order email to supplier"""
+        try:
+            subject = f"Purchase Order {po_data.get('po_id', 'PO-UNKNOWN')} - {po_data.get('store_name', 'Sunrise Super')}"
+            html_content = self.build_supplier_po_html(po_data)
+            success, msg = self.send_email(supplier_email, subject, html_content)
+            return success, msg
+        except Exception as e:
+            return False, str(e)
+
     def queue_scheduled_emails(self, offers, send_date, test_mode=False):
         """Queue emails for future sending in email_log with status='scheduled'."""
         queued = 0

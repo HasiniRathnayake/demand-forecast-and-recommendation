@@ -93,15 +93,6 @@ def render_main_dashboard() -> None:
                 "ready": False,
             },
             {
-                "icon": "🏪",
-                "title": "Smart Inventory Intake",
-                "desc": "Streamline goods receiving, verify deliveries, and "
-                        "update inventory on arrival.",
-                "page": "inventory_intake",
-                "color": "#D97706",
-                "ready": False,
-            },
-            {
                 "icon": "🎁",
                 "title": "Smart Loyalty & Promotions",
                 "desc": "Personalised loyalty rewards and promotion management "
