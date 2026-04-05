@@ -2,6 +2,7 @@
 import smtplib
 import os
 import sys
+import html
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
@@ -28,6 +29,8 @@ class EmailSender:
         discount_pct = offer['discount_pct']
         promo_start  = offer.get('promo_start')
         promo_end    = offer.get('promo_end')
+        taste_pref   = (offer.get('taste_preference') or '').strip()
+        campaign_message = (offer.get('campaign_message') or '').strip()
         friendly_segments = {
             'VIP Customer':     'VIP Member',
             'High Value':       'Valued Member',
@@ -39,6 +42,15 @@ class EmailSender:
         }
         segment = friendly_segments.get(offer['segment'], 'Loyalty Member')
         recommended  = offer['recommended']
+        intro_message = campaign_message or (
+            f"As a valued {segment} member, we have an exclusive offer just for you:"
+        )
+        intro_message_html = html.escape(intro_message).replace('\n', '<br>')
+        taste_pref_html = (
+            f"<p style=\"margin:0 0 14px;color:#16a085;font-size:13px;\">"
+            f"Taste Profile: <strong>{html.escape(taste_pref)}</strong></p>"
+            if taste_pref else ""
+        )
         validity_line = (
             f"Use at checkout — valid from {promo_start} to {promo_end}"
             if promo_start and promo_end else
@@ -79,8 +91,9 @@ class EmailSender:
                 <div style="padding:30px;">
                     <h2 style="color:#2c3e50;">Hi {name}! 👋</h2>
                     <p style="color:#555;font-size:16px;">
-                        As a valued <strong>{segment}</strong> member, we have an exclusive offer just for you:
+                        {intro_message_html}
                     </p>
+                    {taste_pref_html}
 
                     <!-- Offer Badge -->
                     <div style="background:#fff3cd;border:2px dashed #f39c12;border-radius:10px;padding:20px;text-align:center;margin:20px 0;">

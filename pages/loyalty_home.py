@@ -6,6 +6,23 @@ from scripts.db_connection import DatabaseConnection
 import plotly.express as px
 import pandas as pd
 
+
+def _assignment_segment_column():
+    db = DatabaseConnection()
+    cols = db.fetch_all(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'customer_segment_assignment'
+        """
+    )
+    names = {c[0] for c in cols}
+    if 'segment_id' in names:
+        return 'segment_id'
+    if 'segment' in names:
+        return 'segment'
+    return 'segment_id'
+
 def show_home():
     st.title("🏠 Dashboard Overview")
     st.markdown("Welcome to the **Sunrise Super Loyalty Manager**")
@@ -43,10 +60,11 @@ def show_home():
 
     with col_left:
         st.subheader("Customer Segments")
-        seg_data = db.fetch_all("""
+        segment_col = _assignment_segment_column()
+        seg_data = db.fetch_all(f"""
             SELECT cs.segment_name, COUNT(csa.customer_id) as count
             FROM customer_segments cs
-            LEFT JOIN customer_segment_assignment csa ON cs.segment_id = csa.segment_id
+            LEFT JOIN customer_segment_assignment csa ON cs.segment_id = csa.{segment_col}
             GROUP BY cs.segment_name
             HAVING COUNT(csa.customer_id) > 0
             ORDER BY count DESC

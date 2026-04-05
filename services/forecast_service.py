@@ -17,9 +17,9 @@ TO SWAP MOCK → REAL MODEL (Progress 3):
 from __future__ import annotations
 import pandas as pd
 
-# 🔄 Swapping this import when real model is ready:
-from ml.mock_forecaster import MockForecaster as ActiveModel
-# from ml.xgboost_forecaster import XGBoostForecaster as ActiveModel
+# 🔄 Swap this import when real model is ready:
+# from ml.mock_forecaster import MockForecaster as ActiveModel
+from ml.xgboost_forecaster import XGBoostForecaster as ActiveModel
 # from ml.rf_forecaster import RFForecaster as ActiveModel
 
 from data.forecast_repository import fetch_product_sales, save_forecast
@@ -78,7 +78,23 @@ def run_forecast(
         forecast_df["date"] = pd.to_datetime(forecast_df["date"])
 
     # 4 — Accuracy metrics + grade
-    raw_metrics = calculate_metrics(hist_df)
+    # Load from model_metrics.json if available (reflects trained model performance)
+    # Fall back to computing from historical data
+    import os, json as _json
+    _metrics_path = os.path.join(
+        os.path.dirname(__file__), '..', 'ml', 'saved_models', 'model_metrics.json'
+    )
+    if os.path.exists(_metrics_path):
+        try:
+            with open(_metrics_path) as _f:
+                _saved = _json.load(_f)
+            raw_metrics = _saved.get('xgboost', _saved.get('random_forest', {}))
+            if not raw_metrics:
+                raw_metrics = calculate_metrics(hist_df)
+        except Exception:
+            raw_metrics = calculate_metrics(hist_df)
+    else:
+        raw_metrics = calculate_metrics(hist_df)
     metrics = accuracy_grade(raw_metrics)  # adds grade, grade_color, grade_emoji
 
     # 5 — Persist to DB (fire-and-forget; errors surfaced inside save_forecast)

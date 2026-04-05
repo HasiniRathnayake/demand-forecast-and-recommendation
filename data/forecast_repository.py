@@ -1,7 +1,21 @@
 """
-
+data/forecast_repository.py
+============================
 Database queries for daily_sales_history and demand_forecasts tables.
 
+demand_forecasts schema (run SQL migration if columns missing):
+  forecast_id         uuid / bigint  PK
+  product_code        text
+  forecast_date       date
+  predicted_demand    numeric        ← AI forecast OR override value
+  original_ai_demand  numeric        ← original AI value (only set on overrides)
+  confidence_level    numeric
+  model_version       text
+  model_accuracy      jsonb
+  is_manual_override  boolean        DEFAULT false
+  override_reason     text           ← reason text (only set on overrides)
+  override_notes      text           ← staff notes (only set on overrides)
+  created_at          timestamptz
 """
 
 from __future__ import annotations
@@ -19,8 +33,8 @@ def fetch_product_sales(product_code: str, days: int = DEFAULT_HISTORY_DAYS) -> 
     if not product_code or not isinstance(product_code, str):
         raise ValueError("product_code must be a non-empty string.")
     product_code = product_code.strip().upper()
-    if not (1 <= days <= 365):
-        raise ValueError(f"days must be between 1 and 365, got {days}.")
+    if not (1 <= days <= 730):
+        raise ValueError(f"days must be between 1 and 730, got {days}.")
 
     try:
         client = get_client()
@@ -156,18 +170,3 @@ def save_forecast(
     except Exception as exc:
         st.error(f"⚠️  Could not save forecast: {exc}")
         return False
-    
-
-"""demand_forecasts schema (run SQL migration if columns missing):
-  forecast_id         uuid / bigint  PK
-  product_code        text
-  forecast_date       date
-  predicted_demand    numeric        ← AI forecast OR override value
-  original_ai_demand  numeric        ← original AI value (only set on overrides)
-  confidence_level    numeric
-  model_version       text
-  model_accuracy      jsonb
-  is_manual_override  boolean        DEFAULT false
-  override_reason     text           ← reason text (only set on overrides)
-  override_notes      text           ← staff notes (only set on overrides)
-  created_at          timestamptz """
