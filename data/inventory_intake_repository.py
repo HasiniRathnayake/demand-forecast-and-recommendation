@@ -10,14 +10,8 @@ from data.db_client import get_client
 
 
 def fetch_suppliers() -> dict[str, int]:
-    """Return supplier name -> supplier_id map."""
-    try:
-        client = get_client()
-        res = client.table("suppliers").select("supplier_id, supplier_name").execute()
-        rows = res.data or []
-        return {row["supplier_name"]: row["supplier_id"] for row in rows if row.get("supplier_name")}
-    except Exception:
-        return {}
+    # Deprecated for Cycle Counting. Kept returning empty dict just in case of stale cache.
+    return {}
 
 
 def fetch_ai_products() -> dict[str, str]:
@@ -36,27 +30,23 @@ def fetch_ai_products() -> dict[str, str]:
         return {}
 
 
-def fetch_latest_forecast(product_code: str) -> tuple[int | None, float]:
-    """Return (forecast_id, predicted_demand) for latest row by forecast_date."""
+def fetch_latest_system_stock(product_code: str) -> tuple[str | None, float]:
+    """Return (forecast_id, system_stock) using ML replenishment tracking."""
     if not product_code:
         return None, 0.0
 
     try:
         client = get_client()
-        res = (
-            client.table("demand_forecasts")
-            .select("forecast_id, predicted_demand")
-            .eq("product_code", product_code)
-            .order("forecast_date", desc=True)
-            .limit(1)
-            .execute()
-        )
-        rows = res.data or []
-        if not rows:
-            return None, 0.0
-
-        latest = rows[0]
-        return latest.get("forecast_id"), float(latest.get("predicted_demand") or 0.0)
+        
+        # 1. Fetch dummy forecast_id to satisfy the DB schema
+        res_f = client.table("demand_forecasts").select("forecast_id").eq("product_code", product_code).order("forecast_date", desc=True).limit(1).execute()
+        fid = res_f.data[0].get("forecast_id") if res_f.data else None
+            
+        # 2. Fetch the true ML system stock snapshot
+        res_s = client.table("replenishment_orders").select("current_stock_level").eq("product_code", product_code).order("created_at", desc=True).limit(1).execute()
+        sys_stock = float(res_s.data[0].get("current_stock_level") or 0.0) if res_s.data else 0.0
+            
+        return fid, sys_stock
     except Exception:
         return None, 0.0
 
