@@ -618,8 +618,7 @@ def render_short_shipment():
                     display_df['Received Qty'] = display_df['Received Qty'].apply(lambda x: f"{x:,.0f}")
                     display_df['Variance'] = display_df['Variance'].apply(lambda x: f"{x:+,.0f}")
                     display_df['Adjustment Qty'] = display_df['Adjustment Qty'].apply(lambda x: f"{x:,.0f}")
-                    st.dataframe(display_df, width='stretch', hide_index=True)
-                    
+                    st.dataframe(view_df, use_container_width=True, hide_index=True)
                     csv = enhanced_df[['supplier', 'product', 'ordered', 'received', 'discrepancy_qty', 'adjustment_type', 'adjustment_qty', 'reason']].to_csv(index=False)
                     st.download_button(label="📥 Download Adjustments as CSV", data=csv, file_name=f"adjustments_{date.today()}.csv", mime="text/csv", key="download_adjustments")
 
