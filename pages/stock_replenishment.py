@@ -177,11 +177,11 @@ def render_stock_replenishment():
             st.info("No replenishment orders found. Run ML pipeline.")
             return
 
-        for o in orders:
-            if o.get("product_name") in ["UNKNOWN PRODUCT", None, ""]:
-                code = o.get("product_code", "UNKNOWN")
-                # Try the actual product_catalog mapping first, then gracefully degrade to the consistent mock name
-                o["product_name"] = catalog_map.get(code, get_fallback_name(code))
+    for o in orders:
+       if o.get("product_name") in ["UNKNOWN PRODUCT", None, ""]:
+        code = o.get("product_code", "UNKNOWN")
+        # Try the actual product_catalog mapping first, then gracefully degrade to the consistent mock name
+        o["product_name"] = catalog_map.get(code, get_fallback_name(code))
 
         pending_orders = [o for o in orders if o.get("status") == "PENDING_APPROVAL"]
         approved_orders = [o for o in orders if o.get("status") == "APPROVED"]
