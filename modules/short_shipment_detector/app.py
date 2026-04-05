@@ -542,10 +542,9 @@ def render_short_shipment():
         "🏆 Order Reconciliation"
     ])
 
-    # =========================================================
+        # =========================================================
     # TAB 1: DASHBOARD
     # =========================================================
-
     with tab1:
         st.markdown('<div class="section-title">📊 Shipment Dashboard</div>', unsafe_allow_html=True)
 
@@ -579,9 +578,15 @@ def render_short_shipment():
                 st.metric("Financial Impact", f"LKR {abs(total_impact):,.2f}")
 
             st.markdown("---")
-           
+            st.markdown("#### 📊 Delivery Status Distribution")
+            status_counts = df['status'].value_counts().reset_index()
+            status_counts.columns = ['Status', 'Count']
+            fig = px.pie(status_counts, values='Count', names='Status', title='Status Distribution', hole=0.4)
+            fig.update_layout(height=350)
+            st.plotly_chart(fig, use_container_width=True)
+            
             # =========================================================
-            # SECTION 4: QUICK STATS (New)
+            # QUICK STATISTICS (Fixed Indentation)
             # =========================================================
             st.markdown("---")
             st.markdown("### 📊 Quick Statistics")
@@ -590,36 +595,41 @@ def render_short_shipment():
             
             with col_stat1:
                 # Top Performing Supplier
-                top_supplier = df.groupby('supplier_name')['status'].apply(
-                    lambda x: (x == '✅ Accurate').mean() * 100
-                ).sort_values(ascending=False).head(1)
-                if not top_supplier.empty:
-                    st.metric("🏆 Top Supplier", top_supplier.index[0], 
-                             f"{top_supplier.values[0]:.0f}% accuracy")
+                if 'supplier_name' in df.columns and 'status' in df.columns:
+                    top_supplier = df.groupby('supplier_name')['status'].apply(
+                        lambda x: (x == '✅ Accurate').mean() * 100
+                    ).sort_values(ascending=False).head(1)
+                    if not top_supplier.empty:
+                        st.metric("🏆 Top Supplier", top_supplier.index[0], 
+                                 f"{top_supplier.values[0]:.0f}% accuracy")
             
             with col_stat2:
                 # Worst Performing Supplier
-                worst_supplier = df.groupby('supplier_name')['status'].apply(
-                    lambda x: (x == '⚠️ Short Shipped').mean() * 100
-                ).sort_values(ascending=False).head(1)
-                if not worst_supplier.empty:
-                    st.metric("⚠️ Needs Attention", worst_supplier.index[0], 
-                             f"{worst_supplier.values[0]:.0f}% short rate",
-                             delta_color="inverse")
+                if 'supplier_name' in df.columns and 'status' in df.columns:
+                    worst_supplier = df.groupby('supplier_name')['status'].apply(
+                        lambda x: (x == '⚠️ Short Shipped').mean() * 100
+                    ).sort_values(ascending=False).head(1)
+                    if not worst_supplier.empty:
+                        st.metric("⚠️ Needs Attention", worst_supplier.index[0], 
+                                 f"{worst_supplier.values[0]:.0f}% short rate",
+                                 delta_color="inverse")
             
             with col_stat3:
                 # Total Loss
-                total_loss = abs(df[df['financial_impact'] < 0]['financial_impact'].sum())
-                st.metric("💰 Total Loss", f"LKR {total_loss:,.2f}")
+                if 'financial_impact' in df.columns:
+                    total_loss = abs(df[df['financial_impact'] < 0]['financial_impact'].sum())
+                    st.metric("💰 Total Loss", f"LKR {total_loss:,.2f}")
             
             with col_stat4:
                 # Total Credit from Over-deliveries
-                total_credit = df[df['financial_impact'] > 0]['financial_impact'].sum()
-                st.metric("📦 Total Credit", f"LKR {total_credit:,.2f}")
+                if 'financial_impact' in df.columns:
+                    total_credit = df[df['financial_impact'] > 0]['financial_impact'].sum()
+                    st.metric("📦 Total Credit", f"LKR {total_credit:,.2f}")
             
             # =========================================================
-            # SECTION 3: RECENT DELIVERIES TABLE (Enhanced)
+            # RECENT DELIVERIES TABLE
             # =========================================================
+            st.markdown("---")
             st.markdown("### 📋 Recent Deliveries")
             
             # Add filter options
@@ -657,31 +667,18 @@ def render_short_shipment():
                 display_df['Variance %'] = display_df['Variance %'].apply(lambda x: f"{x:+.1f}%")
                 display_df['Financial Impact'] = display_df['Financial Impact'].apply(lambda x: f"LKR {x:+,.2f}")
                 
-                # Color code rows
-                def color_status_rows(row):
-                    if '⚠️ Short Shipped' in row['Status']:
-                        return ['background-color: #ffcccc'] * len(row)
-                    elif '📦 Over Delivered' in row['Status']:
-                        return ['background-color: #ccffcc'] * len(row)
-                    return [''] * len(row)
-                
-                st.dataframe(
-                    display_df.style.apply(color_status_rows, axis=1),
-                    use_container_width=True,
-                    height=400
-                )
+                st.dataframe(display_df, use_container_width=True, height=400)
             else:
                 st.dataframe(filtered_df.head(show_limit), use_container_width=True)
             
-                        # =========================================================
-            # SECTION 5: ALERTS (Enhanced with Tooltips)
+            # =========================================================
+            # ALERTS SECTION
             # =========================================================
             st.markdown("---")
             st.markdown("### 🚨 Alerts")
             st.caption("ℹ️ **Hover over any alert** to see why it was triggered")
             
             alerts = []
-            alert_explanations = []
             
             # Check for critical issues (loss > LKR 10,000)
             critical_loss = df[df['financial_impact'] < -10000]
@@ -689,13 +686,6 @@ def render_short_shipment():
                 for _, row in critical_loss.iterrows():
                     loss_amount = abs(row['financial_impact'])
                     alerts.append(f"🔴 CRITICAL: {row['supplier_name']} caused LKR {loss_amount:,.0f} loss on {row['product_name']}")
-                    alert_explanations.append(f"""
-                    **Why this alert?**
-                    - Loss amount: LKR {loss_amount:,.0f}
-                    - Threshold: > LKR 10,000
-                    - Impact: This supplier has caused significant financial loss
-                    - Recommended action: Immediate investigation required
-                    """)
             
             # Check for repeat offenders (3+ short shipments)
             repeat_offenders = df[df['status'] == '⚠️ Short Shipped'].groupby('supplier_name').size()
@@ -703,66 +693,28 @@ def render_short_shipment():
             if not repeat_offenders.empty:
                 for supplier, count in repeat_offenders.items():
                     alerts.append(f"⚠️ WARNING: {supplier} has {count} short shipments")
-                    alert_explanations.append(f"""
-                    **Why this alert?**
-                    - Short shipments: {count}
-                    - Threshold: 3 or more short shipments
-                    - Pattern: This supplier consistently delivers less than ordered
-                    - Recommended action: Schedule performance review meeting
-                    """)
             
-            # Check for improving trends
-            supplier_trend = df.groupby('supplier_name').apply(
-                lambda x: x['discrepancy_percentage'].mean() if len(x) >= 2 else 0
-            )
-            improving = supplier_trend[supplier_trend > 0].head(2)
-            if not improving.empty:
-                for supplier, trend in improving.items():
-                    alerts.append(f"📈 IMPROVING: {supplier} shows {trend:.1f}% improvement")
-                    alert_explanations.append(f"""
-                    **Why this alert?**
-                    - Improvement rate: {trend:.1f}%
-                    - Positive trend: Discrepancy percentage is decreasing
-                    - Impact: Supplier is getting better at accurate deliveries
-                    - Recommended action: Acknowledge and encourage continued improvement
-                    """)
-            
-            # Check for delivery accuracy drops (new)
-            accuracy_drop = df.groupby('supplier_name').apply(
-                lambda x: x['discrepancy_percentage'].mean() - x['discrepancy_percentage'].mean() if len(x) >= 2 else 0
-            )
             # Check for products with high discrepancy rate
             product_issues = df[abs(df['discrepancy_percentage']) > 15].groupby('product_name').size()
             product_issues = product_issues[product_issues >= 2]
             if not product_issues.empty:
                 for product, count in product_issues.items():
                     alerts.append(f"⚠️ PRODUCT ISSUE: {product} has {count} deliveries with >15% discrepancy")
-                    alert_explanations.append(f"""
-                    **Why this alert?**
-                    - Product: {product}
-                    - Problematic deliveries: {count}
-                    - Threshold: >15% discrepancy
-                    - Recommended action: Check quality control for this product
-                    """)
             
-            # Display alerts with hover explanations
+            # Display alerts
             if alerts:
-                for i, alert in enumerate(alerts[:5]):  # Show top 5 alerts
+                for alert in alerts[:5]:
                     if "CRITICAL" in alert:
-                        with st.expander(f"{alert}", expanded=False):
-                            st.markdown(alert_explanations[i] if i < len(alert_explanations) else "**Investigate immediately**")
+                        st.error(alert)
                     elif "WARNING" in alert or "PRODUCT ISSUE" in alert:
-                        with st.expander(f"{alert}", expanded=False):
-                            st.markdown(alert_explanations[i] if i < len(alert_explanations) else "**Needs attention**")
+                        st.warning(alert)
                     else:
-                        with st.expander(f"{alert}", expanded=False):
-                            st.markdown(alert_explanations[i] if i < len(alert_explanations) else "**Positive development**")
+                        st.info(alert)
                 
                 if len(alerts) > 5:
                     st.caption(f"... and {len(alerts) - 5} more alerts")
             else:
                 st.success("✅ No active alerts. All suppliers performing well!")
-            
     # =========================================================
     # TAB 2: RECORD DELIVERY
     # =========================================================
