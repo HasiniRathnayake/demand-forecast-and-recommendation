@@ -258,6 +258,10 @@ elif page == "short_shipment":
     st.markdown("---")
 
     from pages.short_shipment_page import render_short_shipment
+    def ensure_sample_data():
+     """Placeholder for sample data check"""
+    # This is called but not defined in your code
+     return True
     render_short_shipment()
 
     st.markdown(
