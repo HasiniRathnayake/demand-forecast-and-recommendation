@@ -215,3 +215,179 @@ def show_ai_performance_analytics(start: date, end: date) -> None:
 # Backward compatibility
 def show_ai_performance(start: date, end: date) -> None:
     show_ai_performance_comparison(start, end)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RL PERFORMANCE SECTION  —  Author: IT24103258
+# Added below existing code — does not modify any existing functions above
+# ══════════════════════════════════════════════════════════════════════════════
+
+from data.ai_performance_repository import fetch_rl_performance
+from services.rl_accuracy_service   import score_predictions, rl_summary_metrics
+
+
+def show_rl_model_comparison() -> None:
+    """
+    Shows a static before/after comparison of original model vs RL v2.
+    Based on walk-forward evaluation results from Colab (historical data).
+    """
+    st.markdown(
+        "<h1 style='font-size:3.5rem;font-weight:900;letter-spacing:-1px;'>"
+        "RL Model Improvement</h1>",
+        unsafe_allow_html=True,
+    )
+    st.caption("Results from offline reinforcement learning evaluation on 27 months of historical data.")
+    st.divider()
+
+    # ── Static comparison table from Colab results ─────────────────────────
+    comparison = pd.DataFrame([
+        {
+            "Model"           : "Random Forest (original)",
+            "MAPE %"          : 3.04,
+            "Perfect Pred %"  : 83.6,
+            "Avg Reward"      : 5.42,
+            "MAE"             : 1.863,
+            "R²"              : 0.9914,
+        },
+        {
+            "Model"           : "Random Forest (RL v2)",
+            "MAPE %"          : 1.82,
+            "Perfect Pred %"  : 91.7,
+            "Avg Reward"      : 7.67,
+            "MAE"             : 1.060,
+            "R²"              : 0.9958,
+        },
+        {
+            "Model"           : "XGBoost (original)",
+            "MAPE %"          : 1.88,
+            "Perfect Pred %"  : 94.9,
+            "Avg Reward"      : 8.76,
+            "MAE"             : 1.136,
+            "R²"              : 0.9977,
+        },
+        {
+            "Model"           : "XGBoost RL v2  🏆",
+            "MAPE %"          : 1.23,
+            "Perfect Pred %"  : 98.5,
+            "Avg Reward"      : 9.66,
+            "MAE"             : 0.717,
+            "R²"              : 0.9989,
+        },
+    ])
+
+    # ── Key metrics for best model ──────────────────────────────────────────
+    k1, k2, k3, k4 = st.columns(4)
+    with k1: st.metric("Best Model",          "XGBoost RL v2",  delta="RL retrained")
+    with k2: st.metric("Perfect Predictions", "98.5%",          delta="+3.6% vs original")
+    with k3: st.metric("MAPE Error",          "1.23%",          delta="-0.65% vs original")
+    with k4: st.metric("Avg Reward Score",    "9.66 / 10",      delta="+0.90 vs original")
+
+    st.divider()
+
+    # ── Comparison table ────────────────────────────────────────────────────
+    st.subheader("Model Comparison — All 4 Models")
+    st.dataframe(comparison, use_container_width=True, hide_index=True)
+
+    # ── Bar chart — Perfect Predictions ────────────────────────────────────
+    st.divider()
+    c1, c2 = st.columns(2)
+    with c1:
+        st.subheader("Perfect Prediction Rate")
+        fig = px.bar(
+            comparison, x="Model", y="Perfect Pred %",
+            color="Perfect Pred %",
+            color_continuous_scale=["#fca5a5", "#16a34a"],
+            range_color=[80, 100],
+            text="Perfect Pred %",
+        )
+        fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
+        fig.update_layout(height=380, margin=dict(t=20, b=40, l=30, r=10),
+                          showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with c2:
+        st.subheader("Average Reward Score")
+        fig = px.bar(
+            comparison, x="Model", y="Avg Reward",
+            color="Avg Reward",
+            color_continuous_scale=["#fca5a5", "#16a34a"],
+            range_color=[4, 10],
+            text="Avg Reward",
+        )
+        fig.update_traces(texttemplate="%{text:.2f}", textposition="outside")
+        fig.update_layout(height=380, margin=dict(t=20, b=40, l=30, r=10),
+                          showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Reward function explanation ─────────────────────────────────────────
+    st.divider()
+    st.subheader("How the Reward Function Works")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.success("**✅ Perfect Prediction**  \nWithin 5% error  \nReward: **+10 points**")
+    with col2:
+        st.warning("**⚠️ Over-Predicted (Waste)**  \nExcess stock ordered  \nPenalty: **−2 pts per unit**")
+    with col3:
+        st.error("**❌ Under-Predicted (Stockout)**  \nMissed sales  \nPenalty: **−5 pts per unit**")
+
+
+def show_rl_live_performance(start: date, end: date) -> None:
+    """
+    Shows live RL performance data from the ai_performance Supabase table.
+    Populated as real predictions are made and actual sales are recorded.
+    """
+    st.markdown(
+        "<h1 style='font-size:3.5rem;font-weight:900;letter-spacing:-1px;'>"
+        "RL Live Performance</h1>",
+        unsafe_allow_html=True,
+    )
+    st.caption("Live reward scores from ai_performance table — updated as actual sales come in.")
+    st.divider()
+
+    df = fetch_rl_performance(start, end)
+
+    if df.empty:
+        st.info(
+            "No RL performance records yet for the selected period.  \n"
+            "Records will appear here once the RL model starts making live predictions."
+        )
+        return
+
+    # Score any evaluated rows
+    if "actual_sales" in df.columns and "predicted_demand" in df.columns:
+        df = score_predictions(df)
+
+    m = rl_summary_metrics(df)
+    if m:
+        k1, k2, k3, k4 = st.columns(4)
+        with k1: st.metric("Evaluated Records", m["count"])
+        with k2: st.metric("Avg Reward",        f"{m['avg_reward']} / 10")
+        with k3: st.metric("Perfect Pred %",    f"{m['perfect_pct']}%")
+        with k4: st.metric("MAPE",              f"{m['mape']:.2f}%")
+
+    st.divider()
+    st.subheader("RL Prediction Records")
+
+    disp_cols = ["forecast_date", "product_code", "predicted_demand",
+                 "actual_sales", "error_value", "error_percentage"]
+    disp = df[[c for c in disp_cols if c in df.columns]].copy()
+
+    if "reward" in df.columns:
+        disp["reward"] = df["reward"]
+
+    if "forecast_date"    in disp.columns:
+        disp["forecast_date"] = disp["forecast_date"].apply(fmt_date)
+    if "predicted_demand" in disp.columns:
+        disp["predicted_demand"] = disp["predicted_demand"].apply(lambda x: f"{x:.2f}")
+    if "actual_sales"     in disp.columns:
+        disp["actual_sales"] = disp["actual_sales"].apply(
+            lambda x: f"{x:.2f}" if pd.notna(x) else "Pending"
+        )
+    if "error_percentage" in disp.columns:
+        disp["error_percentage"] = disp["error_percentage"].apply(fmt_pct)
+    if "reward"           in disp.columns:
+        disp["reward"] = disp["reward"].apply(
+            lambda x: f"{x:.2f}" if pd.notna(x) else "—"
+        )
+
+    disp.columns = [c.replace("_", " ").title() for c in disp.columns]
+    st.dataframe(disp, use_container_width=True, hide_index=True)
