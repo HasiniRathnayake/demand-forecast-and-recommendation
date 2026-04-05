@@ -8,6 +8,7 @@ Roles:
   staff    → access to all dashboards (demand forecast, replenishment, etc.)
   customer → access to customer loyalty dashboard only
   admin    → full access + user management
+    supplier → access to supplier order dashboard only
 """
 
 from __future__ import annotations
@@ -15,6 +16,12 @@ import bcrypt
 import streamlit as st
 from datetime import datetime
 from data.db_client import get_client
+
+
+APPROVAL_PENDING = "pending"
+APPROVAL_APPROVED = "approved"
+APPROVAL_REJECTED = "rejected"
+APPROVAL_TABLE_MISSING = "table_missing"
 
 
 # ── Password utilities ─────────────────────────────────────────────────────────
@@ -70,7 +77,7 @@ def validate_registration_inputs(
         errors.append("❌ Passwords do not match.")
 
     # Role
-    if role not in ("staff", "customer", "admin"):
+    if role not in ("staff", "customer", "admin", "supplier"):
         errors.append("❌ Invalid role selected.")
 
     return errors
@@ -93,6 +100,7 @@ def register_user(
     email: str,
     password: str,
     role: str = "staff",
+    supplier_id: str | None = None,
 ) -> tuple[bool, str]:
     """
     Register a new user.
@@ -121,15 +129,75 @@ def register_user(
         if existing_email.data:
             return False, "❌ Email already registered. Please login instead."
 
+        if role == "supplier" and not (supplier_id or "").strip():
+            return False, "❌ Supplier accounts require a Supplier ID."
+
         # Hash password and insert (user_id is auto-increment integer)
         hashed = hash_password(password)
-        client.table("users").insert({
-            "username":      username.strip().lower(),
-            "email":         email.strip().lower(),
+        payload = {
+            "username": username.strip().lower(),
+            "email": email.strip().lower(),
             "password_hash": hashed,
-            "role":          role,
-            "created_at":    datetime.now().isoformat(),
-        }).execute()
+            "role": role,
+            "created_at": datetime.now().isoformat(),
+        }
+
+        # Some deployments may not have users.supplier_id yet.
+        if role == "supplier":
+            payload["supplier_id"] = (supplier_id or None)
+
+        try:
+            client.table("users").insert(payload).execute()
+        except Exception as insert_exc:
+            err = str(insert_exc).lower()
+            if role == "supplier" and "supplier_id" in err and "column" in err:
+                # Fallback for older schemas: create account without supplier_id and
+                # link during login using suppliers.email when possible.
+                payload.pop("supplier_id", None)
+                client.table("users").insert(payload).execute()
+                return True, (
+                    "✅ Account created successfully. "
+                    "Note: users.supplier_id is missing in DB; supplier linking will use email."
+                )
+            raise
+
+        # Staff accounts must be approved by admin before first login.
+        if role == "staff":
+            created_user = (
+                client.table("users")
+                .select("user_id")
+                .eq("username", username.strip().lower())
+                .limit(1)
+                .execute()
+            )
+            if not created_user.data:
+                return False, "❌ Registration failed: unable to locate newly created account."
+
+            user_id = created_user.data[0].get("user_id")
+            if user_id is None:
+                return False, "❌ Registration failed: missing user_id for approval workflow."
+
+            try:
+                client.table("staff_approvals").upsert(
+                    {
+                        "user_id": user_id,
+                        "approval_status": APPROVAL_PENDING,
+                        "requested_at": datetime.now().isoformat(),
+                        "reviewed_at": None,
+                        "reviewed_by": None,
+                    },
+                    on_conflict="user_id",
+                ).execute()
+            except Exception as approval_exc:
+                return False, (
+                    "❌ Staff account created, but approval workflow is not configured. "
+                    f"Please run setup_staff_approvals.sql. Details: {approval_exc}"
+                )
+
+            return True, (
+                "✅ Staff account created and submitted for admin approval. "
+                "You can login after an admin approves your account."
+            )
 
         return True, f"✅ Account created successfully! Welcome, {username}."
 
@@ -144,12 +212,21 @@ def login_user(username: str, password: str) -> tuple[bool, str, dict | None]:
     """
     try:
         client = get_client()
-        response = (
-            client.table("users")
-            .select("user_id, username, email, role, password_hash, customer_id")
-            .eq("username", username.strip().lower())
-            .execute()
-        )
+        # Try with supplier_id first; fallback keeps compatibility with older schema.
+        try:
+            response = (
+                client.table("users")
+                .select("user_id, username, email, role, password_hash, customer_id, supplier_id")
+                .eq("username", username.strip().lower())
+                .execute()
+            )
+        except Exception:
+            response = (
+                client.table("users")
+                .select("user_id, username, email, role, password_hash, customer_id")
+                .eq("username", username.strip().lower())
+                .execute()
+            )
 
         if not response.data:
             return False, "❌ Username not found.", None
@@ -158,6 +235,51 @@ def login_user(username: str, password: str) -> tuple[bool, str, dict | None]:
 
         if not verify_password(password, user["password_hash"]):
             return False, "❌ Incorrect password.", None
+
+        # Gate staff users until approved by an admin.
+        if user.get("role") == "staff":
+            approval_status = _get_staff_approval_status(client, user.get("user_id"))
+            if approval_status is None:
+                # Legacy staff accounts may not have an approval row yet.
+                try:
+                    client.table("staff_approvals").upsert(
+                        {
+                            "user_id": user.get("user_id"),
+                            "approval_status": APPROVAL_PENDING,
+                            "requested_at": datetime.now().isoformat(),
+                            "reviewed_at": None,
+                            "reviewed_by": None,
+                        },
+                        on_conflict="user_id",
+                    ).execute()
+                    approval_status = APPROVAL_PENDING
+                except Exception:
+                    approval_status = APPROVAL_TABLE_MISSING
+
+            if approval_status == APPROVAL_PENDING:
+                return False, "⏳ Your staff account is pending admin approval.", None
+            if approval_status == APPROVAL_REJECTED:
+                return False, "❌ Your staff account was rejected. Contact admin.", None
+            if approval_status == APPROVAL_TABLE_MISSING:
+                return False, "❌ Staff approval system not configured. Ask admin to run setup_staff_approvals.sql.", None
+
+        # Backward-compatible supplier linking: if users.supplier_id is unavailable,
+        # try mapping by suppliers.email so supplier dashboard can still open.
+        if user.get("role") == "supplier" and not user.get("supplier_id"):
+            user_email = (user.get("email") or "").strip().lower()
+            if user_email:
+                try:
+                    supplier_match = (
+                        client.table("suppliers")
+                        .select("supplier_id")
+                        .ilike("email", user_email)
+                        .limit(1)
+                        .execute()
+                    )
+                    if supplier_match.data:
+                        user["supplier_id"] = supplier_match.data[0].get("supplier_id")
+                except Exception:
+                    pass
 
         # Remove hash before storing in session
         user_safe = {k: v for k, v in user.items() if k != "password_hash"}
@@ -190,7 +312,7 @@ def is_authenticated() -> bool:
 
 
 def get_user_role() -> str:
-    """Return role of current user: 'staff', 'customer', or 'admin'."""
+    """Return role of current user: 'staff', 'customer', 'admin', or 'supplier'."""
     user = get_current_user()
     return user.get("role", "") if user else ""
 
@@ -216,3 +338,129 @@ def require_auth(allowed_roles: list[str] | None = None) -> None:
     if allowed_roles and get_user_role() not in allowed_roles:
         st.error(f"⛔ Access denied. This page requires role: {', '.join(allowed_roles)}")
         st.stop()
+
+
+def _get_staff_approval_status(client, user_id) -> str | None:
+    """Return staff approval status for user_id, None when table/row is missing."""
+    if not user_id:
+        return None
+    try:
+        response = (
+            client.table("staff_approvals")
+            .select("approval_status")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception:
+        return APPROVAL_TABLE_MISSING
+
+    if not response.data:
+        return None
+    return response.data[0].get("approval_status")
+
+
+def fetch_pending_staff_approvals() -> list[dict]:
+    """Return pending staff approval requests with user details."""
+    client = get_client()
+    approvals = (
+        client.table("staff_approvals")
+        .select("user_id,approval_status,requested_at")
+        .eq("approval_status", APPROVAL_PENDING)
+        .order("requested_at", desc=False)
+        .execute()
+    )
+
+    pending_rows = approvals.data or []
+    if not pending_rows:
+        return []
+
+    user_ids = [row.get("user_id") for row in pending_rows if row.get("user_id") is not None]
+    users = (
+        client.table("users")
+        .select("user_id,username,email,role,created_at")
+        .in_("user_id", user_ids)
+        .execute()
+    )
+    user_map = {u.get("user_id"): u for u in (users.data or [])}
+
+    merged = []
+    for row in pending_rows:
+        uid = row.get("user_id")
+        u = user_map.get(uid, {})
+        merged.append(
+            {
+                "user_id": uid,
+                "username": u.get("username", "unknown"),
+                "email": u.get("email", ""),
+                "role": u.get("role", ""),
+                "created_at": u.get("created_at"),
+                "requested_at": row.get("requested_at"),
+            }
+        )
+    return merged
+
+
+def fetch_staff_approval_history(limit: int = 200) -> list[dict]:
+    """Return approved/rejected staff approval history with user details."""
+    client = get_client()
+    approvals = (
+        client.table("staff_approvals")
+        .select("user_id,approval_status,requested_at,reviewed_at,reviewed_by")
+        .in_("approval_status", [APPROVAL_APPROVED, APPROVAL_REJECTED])
+        .order("reviewed_at", desc=True)
+        .limit(int(limit))
+        .execute()
+    )
+
+    history_rows = approvals.data or []
+    if not history_rows:
+        return []
+
+    user_ids = [row.get("user_id") for row in history_rows if row.get("user_id") is not None]
+    users = (
+        client.table("users")
+        .select("user_id,username,email,role,created_at")
+        .in_("user_id", user_ids)
+        .execute()
+    )
+    user_map = {u.get("user_id"): u for u in (users.data or [])}
+
+    merged = []
+    for row in history_rows:
+        uid = row.get("user_id")
+        u = user_map.get(uid, {})
+        merged.append(
+            {
+                "user_id": uid,
+                "username": u.get("username", "unknown"),
+                "email": u.get("email", ""),
+                "role": u.get("role", ""),
+                "created_at": u.get("created_at"),
+                "approval_status": row.get("approval_status", ""),
+                "requested_at": row.get("requested_at"),
+                "reviewed_at": row.get("reviewed_at"),
+                "reviewed_by": row.get("reviewed_by", ""),
+            }
+        )
+    return merged
+
+
+def review_staff_approval(user_id: int, approve: bool, reviewed_by: str) -> tuple[bool, str]:
+    """Approve or reject a pending staff account."""
+    client = get_client()
+    status = APPROVAL_APPROVED if approve else APPROVAL_REJECTED
+    try:
+        client.table("staff_approvals").upsert(
+            {
+                "user_id": user_id,
+                "approval_status": status,
+                "reviewed_at": datetime.now().isoformat(),
+                "reviewed_by": reviewed_by,
+            },
+            on_conflict="user_id",
+        ).execute()
+        action = "approved" if approve else "rejected"
+        return True, f"✅ Staff account {action}."
+    except Exception as exc:
+        return False, f"❌ Failed to update approval status: {exc}"

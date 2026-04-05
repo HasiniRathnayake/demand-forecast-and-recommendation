@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 
 from config.settings import APP_ICON
@@ -63,19 +61,36 @@ elif page == "demand_forecast":
         st.info("👈 Select a product from the sidebar to begin forecasting.")
         st.stop()
 
-    with st.spinner(f"Generating forecast for **{selected_product.get('product_name', '')}**..."):
-        try:
-            hist_df, forecast_df, metrics = run_forecast(
-                product=selected_product,
-                forecast_days=settings["forecast_days"],
-                history_days=settings["history_days"],
-            )
-        except ValueError as ve:
-            st.error(f"❌ Validation error: {ve}")
-            st.stop()
-        except Exception as exc:
-            st.error(f"❌ Unexpected error: {exc}")
-            st.stop()
+    # ── Cache forecast in session state so reruns triggered by input widgets
+    # (override form, reason dropdown etc.) don't regenerate new random values
+    # which would change current_val and break the same-value validation ────────
+    forecast_cache_key = (
+        selected_product.get("product_code", ""),
+        settings["forecast_days"],
+        settings["history_days"],
+    )
+
+    if (
+        "forecast_cache" not in st.session_state
+        or st.session_state.get("forecast_cache_key") != forecast_cache_key
+    ):
+        with st.spinner(f"Generating forecast for **{selected_product.get('product_name', '')}**..."):
+            try:
+                hist_df, forecast_df, metrics = run_forecast(
+                    product=selected_product,
+                    forecast_days=settings["forecast_days"],
+                    history_days=settings["history_days"],
+                )
+                st.session_state.forecast_cache = (hist_df, forecast_df, metrics)
+                st.session_state.forecast_cache_key = forecast_cache_key
+            except ValueError as ve:
+                st.error(f"❌ Validation error: {ve}")
+                st.stop()
+            except Exception as exc:
+                st.error(f"❌ Unexpected error: {exc}")
+                st.stop()
+    else:
+        hist_df, forecast_df, metrics = st.session_state.forecast_cache
 
     col_name, col_cat, col_code = st.columns([3, 1, 1])
     col_name.markdown(
@@ -92,23 +107,38 @@ elif page == "demand_forecast":
     )
     st.markdown("---")
 
-    tab1, tab2, tab3 = st.tabs(["📈 Forecast View", "📊 Historical Analysis", "📋 Data & Export"])
-    with tab1:
+    # ── Tab navigation using radio so the selected tab persists across reruns.
+    # st.tabs() in Streamlit 1.32 always resets to Tab 1 on rerun — a radio
+    # button stored in session_state stays on the correct tab. ─────────────────
+    tab_options = ["📈 Forecast View", "📊 Historical Analysis", "📋 Data & Export"]
+
+    selected_tab = st.radio(
+        "Navigate",
+        tab_options,
+        horizontal=True,
+        key="forecast_tab_radio",
+        label_visibility="collapsed",
+    )
+
+    st.markdown("---")
+
+    if selected_tab == "📈 Forecast View":
         render_forecast_tab(
             hist_df=hist_df, forecast_df=forecast_df, metrics=metrics,
             product=selected_product,
             show_confidence=settings["show_confidence"],
             show_weather_impact=settings["show_weather_impact"],
         )
-    with tab2:
+    elif selected_tab == "📊 Historical Analysis":
         render_historical_tab(hist_df=hist_df, product=selected_product)
-    with tab3:
+    elif selected_tab == "📋 Data & Export":
         render_data_tab(hist_df=hist_df, forecast_df=forecast_df, product=selected_product)
 
     st.markdown(
         '<div class="footer">Sunrise Supermarket · Demand Forecasting · IT2021 AIML Project · SLIIT</div>',
         unsafe_allow_html=True,
     )
+
 # ── Route: customer dashboard ─────────────────────────────────────────────────
 elif page == "customer_dashboard":
     from ui.styles import inject_styles
@@ -126,6 +156,23 @@ elif page == "customer_dashboard":
 
     from pages.customer_dashboard import show_customer_dashboard
     show_customer_dashboard(user.get('customer_id'))
+
+elif page == "supplier_dashboard":
+    from ui.styles import inject_styles
+    from services.auth_service import get_current_user, logout
+    inject_styles()
+
+    user = get_current_user()
+    if not user or user.get('role') not in ('supplier', 'admin'):
+        st.session_state.current_page = "main_dashboard"
+        st.rerun()
+
+    if st.button("← Back", key="back_supplier"):
+        st.session_state.current_page = "main_dashboard"
+        st.rerun()
+
+    from pages.supplier_dashboard import render_supplier_dashboard
+    render_supplier_dashboard()
 
 elif page == "customer_settings":
     from ui.styles import inject_styles
@@ -198,6 +245,7 @@ elif page == "loyalty":
         'IT24100971 · SLIIT</div>',
         unsafe_allow_html=True,
     )
+
 # ── Route: short shipment detector ───────────────────────────────────────────
 elif page == "short_shipment":
     from ui.styles import inject_styles
@@ -234,6 +282,7 @@ elif page == "short_shipment":
         '<div class="footer">Sunrise Supermarket · Short-Shipment Detector · SLIIT</div>',
         unsafe_allow_html=True,
     )
+
 # ── Route: stock replenishment ────────────────────────────────────────────────
 elif page == "stock_replenishment":
     from ui.styles import inject_styles
@@ -308,6 +357,48 @@ elif page == "inventory_intake":
         unsafe_allow_html=True,
     )
 
+# ── Route: admin staff approvals ─────────────────────────────────────────────
+elif page == "admin_staff_approvals":
+    from ui.styles import inject_styles
+    from services.auth_service import get_current_user, get_user_role, logout
+    from pages.admin_staff_approvals import render_admin_staff_approvals
+
+    inject_styles()
+
+    if get_user_role() != "admin":
+        st.error("⛔ Access denied. Admin only.")
+        st.session_state.current_page = "main_dashboard"
+        st.rerun()
+
+    col_back, col_title, col_user = st.columns([1, 5, 1])
+    with col_back:
+        if st.button("← Hub", key="back_admin_approvals"):
+            st.session_state.current_page = "main_dashboard"
+            st.rerun()
+    with col_title:
+        st.markdown(
+            '<p class="main-header">🛡️ Admin Controls</p>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<p class="sub-header">Manage pending staff account approvals</p>',
+            unsafe_allow_html=True,
+        )
+    with col_user:
+        user = get_current_user()
+        if user:
+            st.caption(f"👤 {user.get('username','').capitalize()}")
+        if st.button("Logout", key="admin_approval_logout"):
+            logout()
+
+    st.markdown("---")
+    render_admin_staff_approvals()
+
+    st.markdown(
+        '<div class="footer">Sunrise Supermarket · Admin Staff Approvals · SLIIT</div>',
+        unsafe_allow_html=True,
+    )
+
 # ── Route: waste & performance monitor ───────────────────────────────────────
 elif page == "waste_monitor":
     from ui.styles            import inject_styles
@@ -316,6 +407,7 @@ elif page == "waste_monitor":
     from pages.waste_records  import show_waste_records
     from pages.ai_performance import show_ai_performance_comparison, show_ai_performance_analytics
     from pages.savings_report import show_savings_report
+    from services.auth_service import logout
 
     inject_styles()
 
@@ -357,9 +449,7 @@ elif page == "waste_monitor":
             unsafe_allow_html=True,
         )
         if st.button("Logout", key="wpm_logout", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
+            logout()
 
     st.markdown("---")
 
@@ -391,15 +481,3 @@ elif page == "waste_monitor":
 else:
     st.session_state.current_page = "login"
     st.rerun()
-
-#
-#app.py
-#======
-#Main entry point — handles page routing based on session state.
-
-#Flow:
- # Not logged in       →  Login / Register page
-  #Logged in (staff)   →  Main Dashboard hub → individual modules
-  #Logged in (customer)→  Main Dashboard hub → customer view
-
-#Run with:  streamlit run app.py

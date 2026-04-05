@@ -116,11 +116,25 @@ def render_login_page() -> None:
             )
             reg_role = st.selectbox(
                 "Account Type",
-                ["staff", "customer"],
+                ["staff", "customer", "supplier"],
                 key="reg_role",
-                help="Staff access management dashboards. Customers access loyalty features.",
-                format_func=lambda r: "👔 Staff" if r == "staff" else "👤 Customer",
+                help="Staff/admin manage modules. Customers use loyalty. Suppliers use supplier portal.",
+                format_func=lambda r: (
+                    "👔 Staff" if r == "staff" else
+                    "👤 Customer" if r == "customer" else
+                    "🏭 Supplier"
+                ),
             )
+            if reg_role == "staff":
+                st.caption("Staff accounts require admin approval before first login.")
+            reg_supplier_id = ""
+            if reg_role == "supplier":
+                reg_supplier_id = st.text_input(
+                    "Supplier ID",
+                    placeholder="Enter supplier UUID from suppliers table",
+                    key="reg_supplier_id",
+                    help="Required for supplier login so we can map orders to this account.",
+                )
             reg_password = st.text_input(
                 "Password",
                 type="password",
@@ -179,6 +193,10 @@ def render_login_page() -> None:
             all_filled = all([
                 reg_username, reg_email, reg_password, reg_confirm
             ])
+            if reg_role == "supplier" and not reg_supplier_id.strip():
+                reg_ok = False
+                reg_errors.append("⚠️ Supplier ID is required for supplier accounts.")
+
             register_ready = all_filled and reg_ok and not reg_errors
 
             st.markdown("<br>", unsafe_allow_html=True)
@@ -192,11 +210,16 @@ def render_login_page() -> None:
             ):
                 with st.spinner("Creating account..."):
                     success, message = register_user(
-                        reg_username, reg_email, reg_password, reg_role
+                        reg_username,
+                        reg_email,
+                        reg_password,
+                        reg_role,
+                        supplier_id=(reg_supplier_id.strip() if reg_role == "supplier" else None),
                     )
                 if success:
                     st.success(message)
-                    st.info("✅ Account created! Switch to the Login tab to sign in.")
+                    if reg_role != "staff":
+                        st.info("✅ Account created! Switch to the Login tab to sign in.")
                 else:
                     st.markdown(
                         f'<div class="alert-info">{message}</div>',

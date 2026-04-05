@@ -33,7 +33,7 @@ div[data-testid="stForm"] div.stButton > button:hover {
     ai_df         = fetch_ai_performance(start, end)
 
     # ── Add Comparison Form ───────────────────────────────────────────────────
-    st.subheader("Add Actual vs Predicted Comparison")
+    st.markdown("<h1 style='font-size:3.5rem;font-weight:900;letter-spacing:-1px;'> Actual vs Predicted Comparison</h1>", unsafe_allow_html=True)
 
     if all_forecasts.empty:
         st.warning("No demand forecasts found. Please generate forecasts in the Demand Forecast module first.")
