@@ -184,24 +184,21 @@ def send_delivery_alert(supplier_name, product_name, ordered_qty, received_qty, 
     subject = f"{alert_icon} {alert_type}: {supplier_name} - {product_name}"
     
     body = f"""
-╔══════════════════════════════════════════════════════════════╗
-║           SUNRISE SUPERMARKET - DELIVERY STATUS REPORT       ║
-╚══════════════════════════════════════════════════════════════╝
+
+          SUNRISE SUPERMARKET - DELIVERY STATUS REPORT       
 
 {alert_icon} ALERT TYPE: {alert_type} {alert_icon}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Status:         {message}
 Date & Time:    {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 Delivery Date:  {delivery_date}
 PO Reference:   {po_id if po_id else 'Manual Entry'}
 
 🏢 SUPPLIER INFORMATION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 Supplier Name:  {supplier_name}
 Alert Sent To:  {your_email} (Project Demo Mode)
 
 📦 DELIVERY DETAILS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Product:        {product_name}
 Ordered Qty:    {ordered_qty:,.0f} units
 Received Qty:   {received_qty:,.0f} units
@@ -213,12 +210,12 @@ Variance Pct:   {pct:+.1f}%
     if discrepancy_qty < 0:
         body += f"""
 ⚠️ SHORTAGE DETAILS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 Shortage Qty:   {abs(discrepancy_qty):,.0f} units
 Shortage Pct:   {pct:.1f}%
 
 📌 RECOMMENDED ACTION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 {action_needed}
 • Request credit note for missing {abs(discrepancy_qty):,.0f} units
 • Adjust next purchase order to compensate
@@ -226,12 +223,12 @@ Shortage Pct:   {pct:.1f}%
     elif discrepancy_qty > 0:
         body += f"""
 📦 OVERAGE DETAILS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 Overage Qty:    {discrepancy_qty:,.0f} units
 Overage Pct:    {pct:.1f}%
 
 📌 RECOMMENDED ACTION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 {action_needed}
 • Check if extra units can be stored
 • Negotiate return or discount for overage
@@ -239,11 +236,11 @@ Overage Pct:    {pct:.1f}%
     else:
         body += f"""
 ✅ ACCURACY DETAILS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 This is a perfect delivery! No discrepancies found.
 
 📌 RECOMMENDED ACTION
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
 {action_needed}
 • Update inventory system
 • Mark supplier as reliable for this product
@@ -352,10 +349,7 @@ def render_short_shipment():
         }
         </style>
     """, unsafe_allow_html=True)
-    
-    st.markdown('<div class="main-title">📦 Sunrise Supermarket</div>', unsafe_allow_html=True)
-    st.markdown('<div class="subtitle">Short Shipment Detection & Reconciliation System</div>', unsafe_allow_html=True)
-    st.markdown("---")
+   
     
     def get_products_from_catalog():
         try:
