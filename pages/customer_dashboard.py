@@ -52,11 +52,29 @@ SEGMENT_PERKS = {
 }
 
 
+def _assignment_segment_column():
+    db = DatabaseConnection()
+    cols = db.fetch_all(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'customer_segment_assignment'
+        """
+    )
+    names = {c[0] for c in cols}
+    if 'segment_id' in names:
+        return 'segment_id'
+    if 'segment' in names:
+        return 'segment'
+    return 'segment_id'
+
+
 # ── Cached data loaders ───────────────────────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
 def _get_profile(customer_id):
     db = DatabaseConnection()
-    return db.fetch_one("""
+    segment_col = _assignment_segment_column()
+    return db.fetch_one(f"""
         SELECT c.customer_id, c.first_name, c.last_name, c.email,
                c.join_date, c.last_active_date,
                cs.segment_name
@@ -64,7 +82,7 @@ def _get_profile(customer_id):
         LEFT JOIN customer_segment_assignment csa
                ON c.customer_id = csa.customer_id
         LEFT JOIN customer_segments cs
-               ON csa.segment_id = cs.segment_id
+         ON csa.{segment_col} = cs.segment_id
         WHERE c.customer_id = %s
     """, [customer_id])
 
@@ -389,8 +407,13 @@ def show_customer_dashboard(customer_id):
                 )
         else:
             st.markdown(
+
+                '<div class="alert-info">No promotions yet — '
+                'check back soon for exclusive offers!</div>',
+
                 '<div class="alert-info">No active promotions right now — '
                 'check back soon for fresh offers!</div>',
+
                 unsafe_allow_html=True
             )
 

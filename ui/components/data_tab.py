@@ -1,5 +1,7 @@
 """
-Data & Export
+ui/components/data_tab.py
+==========================
+Tab 3 — Data & Export
 Sub-tabs:
   1. Historical Data  — paginated table + CSV download
   2. Forecast Data    — forecast table with override indicators + CSV download
@@ -11,10 +13,18 @@ from __future__ import annotations
 from datetime import datetime
 
 import pandas as pd
+import re
 import streamlit as st
 
 from data.forecast_repository import save_forecast, fetch_overrides
 from config.settings import MAX_FORECAST_DAYS
+
+
+def _clean_df_cols(df: pd.DataFrame) -> pd.DataFrame:
+    """Clean DataFrame column names by removing emojis and special characters."""
+    df = df.copy()
+    df.columns = [re.sub(r"[^\x00-\x7F\u00C0-\u024F\u1E00-\u1EFF]+", "", col).strip() for col in df.columns]
+    return df
 
 
 def render_data_tab(
@@ -81,12 +91,29 @@ def _render_historical_table(hist_df: pd.DataFrame, product: dict) -> None:
     display_cols = [c for c in ["transaction_date", "quantity_sold", "is_promotion"] if c in page_data.columns]
     st.dataframe(page_data[display_cols], use_container_width=True, hide_index=True, column_config=col_config)
 
-    csv_hist = hist_df.to_csv(index=False)
+    # Column selector for historical download
+    hist_all_cols = [c for c in ["transaction_date","quantity_sold","is_promotion"] if c in hist_df.columns]
+    hist_col_labels = {
+        "transaction_date": "Date",
+        "quantity_sold": "Units Sold",
+        "is_promotion": "Promotion Flag",
+    }
+    hist_selected = st.multiselect(
+        "Select columns to download:",
+        options=hist_all_cols,
+        default=hist_all_cols,
+        format_func=lambda c: hist_col_labels.get(c, c),
+        key=f"hist_col_sel_{product.get('product_code','')}",
+    )
+    dl_df_hist = hist_df[hist_selected] if hist_selected else hist_df[hist_all_cols]
+    # utf-8-sig adds BOM so Excel opens without encoding issues
+    # Clean column names to remove emojis before export
+    csv_hist = _clean_df_cols(dl_df_hist).to_csv(index=False, encoding="utf-8-sig")
     st.download_button(
         "📥 Download Historical Data (CSV)",
-        data=csv_hist,
+        data=csv_hist.encode("utf-8-sig"),
         file_name=f"history_{product.get('product_code','')}_{datetime.now().strftime('%Y%m%d')}.csv",
-        mime="text/csv",
+        mime="text/csv; charset=utf-8",
         key=f"dl_hist_{product.get('product_code','')}",
     )
 
@@ -148,12 +175,28 @@ def _render_forecast_table(forecast_df: pd.DataFrame, product: dict) -> None:
             unsafe_allow_html=True,
         )
 
-    csv_fc = table_df.to_csv(index=False)
+    # Column selector for forecast download
+    fc_all_cols = list(table_df.columns)
+    fc_selected = st.multiselect(
+        "Select columns to download:",
+        options=fc_all_cols,
+        default=fc_all_cols,
+        key=f"fc_col_sel_{product.get('product_code','')}",
+    )
+    dl_df_fc = table_df[fc_selected] if fc_selected else table_df
+    # Clean column names and cell values to remove emojis before export
+    clean_fc = _clean_df_cols(dl_df_fc).copy()
+    # Also clean string cell values (Status, Day Type columns contain emojis)
+    for col in clean_fc.select_dtypes(include="object").columns:
+        clean_fc[col] = clean_fc[col].astype(str).apply(
+            lambda v: re.sub(r"[^\x00-\x7F\u00C0-\u024F\u1E00-\u1EFF]+", "", v).strip()
+        )
+    csv_fc = clean_fc.to_csv(index=False, encoding="utf-8-sig")
     st.download_button(
         "📥 Download Forecast (CSV)",
-        data=csv_fc,
+        data=csv_fc.encode("utf-8-sig"),
         file_name=f"forecast_{product.get('product_code','')}_{datetime.now().strftime('%Y%m%d')}.csv",
-        mime="text/csv",
+        mime="text/csv; charset=utf-8",
         key=f"dl_forecast_{product.get('product_code','')}",
     )
 
@@ -182,7 +225,7 @@ def _render_manual_override(forecast_df: pd.DataFrame, product: dict) -> None:
         st.warning("Generate a forecast first before applying overrides.")
         return
 
-    # ── Initialize session state flags ─────────────────────────────────────────
+    # Initialize session state flags
     # These prevent success message re-firing when switching tabs
     if "override_saved" not in st.session_state:
         st.session_state.override_saved = False
@@ -243,7 +286,7 @@ def _render_manual_override(forecast_df: pd.DataFrame, product: dict) -> None:
         key="override_notes",
     )
 
-    # ── Validation ─────────────────────────────────────────────────────────────
+    # Validation
     errors: list[str] = []
 
     if override_val <= 0:
@@ -348,12 +391,12 @@ def _render_override_history(product: dict) -> None:
 
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-    csv = pd.DataFrame(rows).to_csv(index=False)
+    csv = pd.DataFrame(rows).to_csv(index=False, encoding="utf-8-sig")
     st.download_button(
         "📥 Download Override History (CSV)",
-        data=csv,
+        data=csv.encode("utf-8-sig"),
         file_name=f"overrides_{product.get('product_code','')}_{datetime.now().strftime('%Y%m%d')}.csv",
-        mime="text/csv",
+        mime="text/csv; charset=utf-8",
         key=f"dl_overrides_{product.get('product_code','')}",
     )
 

@@ -7,61 +7,107 @@ from scripts.db_connection import DatabaseConnection
 class CustomerSegmentation:
     def __init__(self):
         self.db = DatabaseConnection()
+        # Defaults are aligned with the current Supabase clustering output table.
+        self.cluster_table = os.getenv("CLUSTER_RESULTS_TABLE", "customer_segment_assignment")
+        self.cluster_customer_id_col = os.getenv("CLUSTER_CUSTOMER_ID_COLUMN", "customer_id")
+        self.cluster_label_col = os.getenv("CLUSTER_LABEL_COLUMN", "segment")
 
-    def get_customer_metrics(self):
+        # Update this mapping if your clustering model uses a different label meaning.
+        self.cluster_to_segment = {
+            "0": "Regular Customer",
+            "1": "VIP Customer",
+            "2": "At Risk",
+            "3": "High Value",
+            "4": "Occasional",
+            "5": "New Customer",
+            "6": "Churned",
+            # Notebook loyalty_status labels
+            "💎 vip": "VIP Customer",
+            "🛒 regular": "Regular Customer",
+            "🌱 new customer": "New Customer",
+            "😴 churned": "Churned",
+            "vip": "VIP Customer",
+            "high value": "High Value",
+            "regular": "Regular Customer",
+            "regular customer": "Regular Customer",
+            "at risk": "At Risk",
+            "occasional": "Occasional",
+            "new": "New Customer",
+            "new customer": "New Customer",
+            "churned": "Churned",
+        }
+
+    def _get_assignment_segment_column(self):
+        cols = self.db.fetch_all(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'customer_segment_assignment'
+            """
+        )
+        col_set = {c[0] for c in cols}
+        if 'segment_id' in col_set:
+            return 'segment_id'
+        if 'segment' in col_set:
+            return 'segment'
+        return None
+
+    def get_cluster_assignments(self):
         query = """
-        SELECT 
+        SELECT
             c.customer_id,
             c.first_name,
             c.email,
             c.email_notification_enabled,
             c.promotional_emails_allowed,
-            COUNT(DISTINCT t.transaction_id) as transaction_count,
-            COALESCE(SUM(t.total_amount), 0) as total_spent,
-            COALESCE(AVG(t.total_amount), 0) as avg_basket,
-            MAX(t.transaction_date) as last_purchase,
-            COALESCE(CURRENT_DATE - MAX(t.transaction_date), 999) as days_inactive
+            cr.{cluster_label_col} as cluster_label
         FROM customers c
-        LEFT JOIN transactions t ON c.customer_id = t.customer_id
+        JOIN {cluster_table} cr
+          ON c.{cluster_customer_id_col} = cr.{cluster_customer_id_col}
         WHERE c.is_active = TRUE
-        GROUP BY c.customer_id, c.first_name, c.email,
-                 c.email_notification_enabled, c.promotional_emails_allowed
-        ORDER BY total_spent DESC
+        ORDER BY c.customer_id
         """
-        rows = self.db.fetch_all(query)
+        rows = self.db.fetch_all(query.format(
+            cluster_table=self.cluster_table,
+            cluster_customer_id_col=self.cluster_customer_id_col,
+            cluster_label_col=self.cluster_label_col,
+        ))
+        if not rows:
+            return []
+
         customers = []
         for row in rows:
+            cluster_label = str(row[5]).strip() if row[5] is not None else ""
             customers.append({
                 'customer_id':   row[0],
                 'first_name':    row[1] or 'Customer',
                 'email':         row[2],
                 'email_enabled': row[3],
                 'promo_allowed': row[4],
-                'tx_count':      int(row[5]),
-                'total_spent':   float(row[6]),
-                'avg_basket':    float(row[7]),
-                'last_purchase': row[8],
-                'days_inactive': int(row[9]) if row[9] else 999
+                'cluster_label': cluster_label,
             })
         return customers
 
-    def assign_segment(self, c):
-        if c['tx_count'] == 0:
-            return 'New Customer'
-        if c['total_spent'] >= 10000 and c['tx_count'] >= 6:
-            return 'VIP Customer'
-        if c['total_spent'] >= 15000:
-            return 'High Value'
-        if c['total_spent'] >= 5000 and c['days_inactive'] <= 30:
-            return 'Regular Customer'
-        if c['total_spent'] >= 5000 and c['days_inactive'] > 30:
-            return 'At Risk'
-        if c['days_inactive'] > 60:
-            return 'Churned'
+    def map_cluster_to_segment(self, cluster_label):
+        normalized = str(cluster_label).strip().lower()
+        if normalized in self.cluster_to_segment:
+            return self.cluster_to_segment[normalized]
+
+        # If labels are numeric IDs from customer_segments.segment_id,
+        # resolve directly from DB.
+        if normalized.isdigit():
+            seg_row = self.db.fetch_one(
+                "SELECT segment_name FROM customer_segments WHERE segment_id = %s",
+                [int(normalized)]
+            )
+            if seg_row:
+                return seg_row[0]
+
         return 'Occasional'
 
     def run(self):
-        customers = self.get_customer_metrics()
+        customers = self.get_cluster_assignments()
         if not customers:
             return []
 
@@ -89,8 +135,13 @@ class CustomerSegmentation:
                 )
 
         results = []
+        assignment_segment_col = self._get_assignment_segment_column()
+        if not assignment_segment_col:
+            print("❌ Missing segment column in customer_segment_assignment (need segment_id or segment)")
+            return []
+
         for c in customers:
-            seg_name = self.assign_segment(c)
+            seg_name = self.map_cluster_to_segment(c['cluster_label'])
             c['segment'] = seg_name
 
             seg_row = self.db.fetch_one(
@@ -99,17 +150,38 @@ class CustomerSegmentation:
             )
             if seg_row:
                 seg_id = seg_row[0]
-                # Remove old assignment then insert fresh
-                self.db.execute_query(
-                    "DELETE FROM customer_segment_assignment WHERE customer_id = %s",
-                    [c['customer_id']]
-                )
-                self.db.execute_query(
-                    """INSERT INTO customer_segment_assignment
-                       (customer_id, segment_id, assigned_date)
-                       VALUES (%s, %s, CURRENT_DATE)""",
-                    [c['customer_id'], seg_id]
-                )
+                # Handle both schema variants: segment_id (legacy) and segment (current).
+                if assignment_segment_col == 'segment_id':
+                    self.db.execute_query(
+                        "DELETE FROM customer_segment_assignment WHERE customer_id = %s",
+                        [c['customer_id']]
+                    )
+                    self.db.execute_query(
+                        """INSERT INTO customer_segment_assignment
+                           (customer_id, segment_id, assigned_date)
+                           VALUES (%s, %s, CURRENT_DATE)""",
+                        [c['customer_id'], seg_id]
+                    )
+                else:
+                    exists = self.db.fetch_one(
+                        "SELECT 1 FROM customer_segment_assignment WHERE customer_id = %s",
+                        [c['customer_id']]
+                    )
+                    if exists:
+                        self.db.execute_query(
+                            """UPDATE customer_segment_assignment
+                               SET segment = %s,
+                                   assigned_date = CURRENT_DATE
+                               WHERE customer_id = %s""",
+                            [seg_id, c['customer_id']]
+                        )
+                    else:
+                        self.db.execute_query(
+                            """INSERT INTO customer_segment_assignment
+                               (customer_id, segment, assigned_date)
+                               VALUES (%s, %s, CURRENT_DATE)""",
+                            [c['customer_id'], seg_id]
+                        )
             results.append(c)
 
         return results
@@ -120,4 +192,4 @@ if __name__ == "__main__":
     results = seg.run()
     print(f"\n✅ Segmented {len(results)} customers")
     for c in results:
-        print(f"  {c['first_name']:15} → {c['segment']}")
+        print(f"  {c['first_name']:15} | cluster={c['cluster_label']} → {c['segment']}")
