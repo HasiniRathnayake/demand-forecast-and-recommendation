@@ -618,7 +618,11 @@ def render_short_shipment():
                     display_df['Received Qty'] = display_df['Received Qty'].apply(lambda x: f"{x:,.0f}")
                     display_df['Variance'] = display_df['Variance'].apply(lambda x: f"{x:+,.0f}")
                     display_df['Adjustment Qty'] = display_df['Adjustment Qty'].apply(lambda x: f"{x:,.0f}")
-                    st.dataframe(view_df, use_container_width=True, hide_index=True)
+                    # Check if view_df exists and has data
+                    if 'view_df' in locals() and view_df is not None and not view_df.empty:
+                        st.dataframe(view_df, use_container_width=True, hide_index=True)
+                    else:
+                      st.info("No delivery data found for the selected period.")
                     csv = enhanced_df[['supplier', 'product', 'ordered', 'received', 'discrepancy_qty', 'adjustment_type', 'adjustment_qty', 'reason']].to_csv(index=False)
                     st.download_button(label="📥 Download Adjustments as CSV", data=csv, file_name=f"adjustments_{date.today()}.csv", mime="text/csv", key="download_adjustments")
 
