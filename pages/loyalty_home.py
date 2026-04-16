@@ -6,6 +6,13 @@ from scripts.db_connection import DatabaseConnection
 import plotly.express as px
 import pandas as pd
 
+TASTE_LABELS = {
+    'balanced shoppers': '🥦 balanced shoppers',
+    'fresh & protein lovers': '🐟 fresh & protein lovers',
+    'family & baby care': '👶 family & baby care',
+    'drink & health focused': '🥤 drink & health focused',
+}
+
 
 def _assignment_segment_column():
     db = DatabaseConnection()
@@ -22,6 +29,33 @@ def _assignment_segment_column():
     if 'segment' in names:
         return 'segment'
     return 'segment_id'
+
+
+def _assignment_taste_column():
+    db = DatabaseConnection()
+    cols = db.fetch_all(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'customer_segment_assignment'
+        """
+    )
+    names = {c[0] for c in cols}
+    if 'product_preference' in names:
+        return 'product_preference'
+    if 'segment_name' in names:
+        return 'segment_name'
+    return None
+
+
+def _normalize_taste_label(raw_label):
+    normalized = str(raw_label or '').strip().lower()
+    if not normalized:
+        return ''
+    for key, label in TASTE_LABELS.items():
+        if key in normalized:
+            return label
+    return str(raw_label).strip()
 
 def show_home():
     st.title("🏠 Dashboard Overview")
@@ -42,16 +76,37 @@ def show_home():
     """)
     total_tx        = db.fetch_one("SELECT COUNT(*) FROM transactions")
     total_revenue   = db.fetch_one("SELECT COALESCE(SUM(total_amount),0) FROM transactions")
+    monthly_avg_rev = db.fetch_one("""
+        SELECT COALESCE(AVG(monthly_revenue), 0)
+        FROM (
+            SELECT DATE_TRUNC('month', transaction_date) AS month,
+                   SUM(total_amount) AS monthly_revenue
+            FROM transactions
+            GROUP BY DATE_TRUNC('month', transaction_date)
+        ) m
+    """)
+
+    customers_n = int(total_customers[0]) if total_customers else 0
+    eligible_n = int(email_eligible[0]) if email_eligible else 0
+    tx_n = int(total_tx[0]) if total_tx else 0
+    rev_n = float(total_revenue[0]) if total_revenue else 0.0
+    avg_monthly_rev = float(monthly_avg_rev[0]) if monthly_avg_rev else 0.0
+    avg_basket = (rev_n / tx_n) if tx_n > 0 else 0.0
+    avg_tx_per_customer = (tx_n / customers_n) if customers_n > 0 else 0.0
+    eligible_rate = (eligible_n / customers_n * 100) if customers_n > 0 else 0.0
 
     with col1:
-        st.metric("Total Customers",  total_customers[0] if total_customers else 0)
+        st.metric("Avg Basket Size", f"Rs.{avg_basket:,.0f}")
     with col2:
-        st.metric("Email Eligible",   email_eligible[0]  if email_eligible  else 0)
+        st.metric("Avg Monthly Revenue", f"Rs.{avg_monthly_rev:,.0f}")
     with col3:
-        st.metric("Total Transactions", total_tx[0]      if total_tx        else 0)
+        st.metric("Avg Tx per Customer", f"{avg_tx_per_customer:.2f}")
     with col4:
-        rev = float(total_revenue[0]) if total_revenue else 0
-        st.metric("Total Revenue", f"Rs.{rev:,.0f}")
+        st.metric("Promo-Eligible Rate", f"{eligible_rate:.1f}%")
+
+    st.caption(
+        f"Historical base: {customers_n} active customers, {tx_n} transactions, total revenue Rs.{rev_n:,.0f}."
+    )
 
     st.divider()
 
@@ -80,38 +135,62 @@ def show_home():
             st.info("No segments yet. Go to Customer Segments and click Analyse.")
 
     with col_right:
-        st.subheader("Revenue by Month")
-        rev_data = db.fetch_all("""
-            SELECT TO_CHAR(transaction_date,'Mon YYYY') as month,
-                   SUM(total_amount) as revenue,
-                   DATE_TRUNC('month', transaction_date) as sort_date
-            FROM transactions
-            GROUP BY month, sort_date
-            ORDER BY sort_date
-        """)
-        if rev_data:
-            df2 = pd.DataFrame(rev_data, columns=['Month', 'Revenue', 'Sort'])
-            fig2 = px.bar(df2, x='Month', y='Revenue',
-                          color_discrete_sequence=['#2ecc71'])
-            fig2.update_layout(height=350, margin=dict(t=20, b=20))
+        st.subheader("Taste Preferences")
+        taste_col = _assignment_taste_column()
+        if taste_col:
+            taste_data = db.fetch_all(f"""
+                SELECT LOWER(TRIM(csa.{taste_col}::text)) as preference,
+                       COUNT(DISTINCT csa.customer_id) as count
+                FROM customer_segment_assignment csa
+                WHERE csa.{taste_col} IS NOT NULL
+                  AND TRIM(csa.{taste_col}::text) <> ''
+                GROUP BY LOWER(TRIM(csa.{taste_col}::text))
+                ORDER BY count DESC
+                LIMIT 10
+            """)
+            taste_data = [(_normalize_taste_label(row[0]), row[1]) for row in taste_data]
+        else:
+            taste_data = []
+
+        if taste_data:
+            df2 = pd.DataFrame(taste_data, columns=['Preference', 'Count'])
+            fig2 = px.bar(
+                df2,
+                x='Count',
+                y='Preference',
+                orientation='h',
+                color='Count',
+                color_continuous_scale='Blues',
+            )
+            fig2.update_layout(height=350, margin=dict(t=20, b=20), yaxis={'categoryorder': 'total ascending'})
             st.plotly_chart(fig2, use_container_width=True)
         else:
-            st.info("No transaction data found.")
+            st.info("No taste preference data found.")
 
-    # ── Recent Transactions ───────────────────────────────
-    st.subheader("Recent Transactions")
-    recent = db.fetch_all("""
-        SELECT t.transaction_id, c.first_name, t.transaction_date,
-               t.total_amount
-        FROM transactions t
-        JOIN customers c ON t.customer_id = c.customer_id
-        ORDER BY t.transaction_date DESC
-        LIMIT 10
+    # ── Top products by segment ───────────────────────────
+    st.subheader("Top Products by Segment")
+    segment_col = _assignment_segment_column()
+    top_products = db.fetch_all(f"""
+        SELECT
+            cs.segment_name,
+            p.product_name,
+            COALESCE(SUM(ti.quantity), 0) as total_qty,
+            COUNT(DISTINCT t.transaction_id) as tx_count
+        FROM customer_segment_assignment csa
+        JOIN customer_segments cs ON csa.{segment_col} = cs.segment_id
+        JOIN customers c ON csa.customer_id = c.customer_id
+        JOIN transactions t ON c.customer_id = t.customer_id
+        JOIN transaction_items ti ON t.transaction_id = ti.transaction_id
+        JOIN product_catalog p ON ti.product_code = p.product_code
+        WHERE c.is_active = TRUE
+        GROUP BY cs.segment_name, p.product_name
+        ORDER BY cs.segment_name, total_qty DESC
     """)
-    if recent:
-        df3 = pd.DataFrame(recent,
-                           columns=['Transaction ID','Customer','Date','Amount'])
-        df3['Amount'] = df3['Amount'].apply(lambda x: f"Rs.{float(x):,.2f}")
-        st.dataframe(df3, use_container_width=True, hide_index=True)
+
+    if top_products:
+        df_top = pd.DataFrame(top_products, columns=['Segment', 'Product', 'Total Qty', 'Transactions'])
+        df_top = df_top.sort_values(['Segment', 'Total Qty'], ascending=[True, False])
+        df_top = df_top.groupby('Segment', as_index=False, group_keys=False).head(5)
+        st.dataframe(df_top, use_container_width=True, hide_index=True)
     else:
-        st.info("No transactions found.")
+        st.info("No product-level segment history found.")

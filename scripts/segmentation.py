@@ -3,6 +3,9 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.db_connection import DatabaseConnection
+from sklearn.cluster import KMeans
+import pandas as pd
+import numpy as np
 
 class CustomerSegmentation:
     def __init__(self):
@@ -14,18 +17,21 @@ class CustomerSegmentation:
 
         # Update this mapping if your clustering model uses a different label meaning.
         self.cluster_to_segment = {
-            "0": "Regular Customer",
-            "1": "VIP Customer",
-            "2": "At Risk",
-            "3": "High Value",
-            "4": "Occasional",
-            "5": "New Customer",
-            "6": "Churned",
             # Notebook loyalty_status labels
             "💎 vip": "VIP Customer",
             "🛒 regular": "Regular Customer",
             "🌱 new customer": "New Customer",
             "😴 churned": "Churned",
+            # Notebook product-preference labels sometimes end up in source data
+            "🐟 fresh & protein lovers": "Regular Customer",
+            "🥦 balanced shoppers": "Regular Customer",
+            "👶 family & baby care": "Regular Customer",
+            "🥤 drink & health focused": "Regular Customer",
+            # Direct segment IDs from notebook export mapping
+            "1": "VIP Customer",
+            "3": "Regular Customer",
+            "6": "New Customer",
+            "7": "Churned",
             "vip": "VIP Customer",
             "high value": "High Value",
             "regular": "Regular Customer",
@@ -35,6 +41,26 @@ class CustomerSegmentation:
             "new": "New Customer",
             "new customer": "New Customer",
             "churned": "Churned",
+        }
+
+        # Taste preference mapping from product categories
+        self.category_to_taste = {
+            'Fruits & Veg': '🥦 balanced shoppers',
+            'Dairy': '🥦 balanced shoppers',
+            'Meat': '🐟 fresh & protein lovers',
+            'Seafood': '🐟 fresh & protein lovers',
+            'Beverages': '🥤 drink & health focused',
+            'Nutrition & Fiber': '🥤 drink & health focused',
+            'Baby': '👶 family & baby care',
+            'House Care': '👶 family & baby care',
+            'Snacks': '🥦 balanced shoppers',
+            'Desserts & Ingredients': '🥦 balanced shoppers',
+            'Flour': '🥦 balanced shoppers',
+            'Noodles & Soup': '🥦 balanced shoppers',
+            'Oil': '🥦 balanced shoppers',
+            'Rice': '🥦 balanced shoppers',
+            'Spreads & Jams': '🥦 balanced shoppers',
+            'Sugar': '🥦 balanced shoppers',
         }
 
     def _get_assignment_segment_column(self):
@@ -94,8 +120,7 @@ class CustomerSegmentation:
         if normalized in self.cluster_to_segment:
             return self.cluster_to_segment[normalized]
 
-        # If labels are numeric IDs from customer_segments.segment_id,
-        # resolve directly from DB.
+        # If labels are numeric IDs from customer_segments.segment_id, resolve directly from DB.
         if normalized.isdigit():
             seg_row = self.db.fetch_one(
                 "SELECT segment_name FROM customer_segments WHERE segment_id = %s",
@@ -106,7 +131,75 @@ class CustomerSegmentation:
 
         return 'Occasional'
 
-    def run(self):
+    def cluster_by_taste_preferences(self):
+        """Assign taste preferences based on most purchased product category."""
+        # Get customer purchase data by category
+        query = """
+        SELECT 
+            c.customer_id,
+            p.category,
+            COALESCE(SUM(ti.quantity), 0) as total_qty
+        FROM customers c
+        JOIN transactions t ON c.customer_id = t.customer_id
+        JOIN transaction_items ti ON t.transaction_id = ti.transaction_id
+        JOIN product_catalog p ON ti.product_code = p.product_code
+        WHERE c.is_active = TRUE
+        GROUP BY c.customer_id, p.category
+        ORDER BY c.customer_id, total_qty DESC
+        """
+        rows = self.db.fetch_all(query)
+        if not rows:
+            return []
+
+        # Group by customer and find most purchased category
+        customer_tastes = {}
+        for row in rows:
+            customer_id = row[0]
+            category = row[1]
+            qty = row[2]
+            if customer_id not in customer_tastes:
+                customer_tastes[customer_id] = (category, qty)
+            elif qty > customer_tastes[customer_id][1]:
+                customer_tastes[customer_id] = (category, qty)
+
+        # Get existing customer IDs in assignment table
+        existing_ids = set()
+        existing_rows = self.db.fetch_all("SELECT customer_id FROM customer_segment_assignment")
+        for row in existing_rows:
+            existing_ids.add(row[0])
+
+        # Assign taste based on category
+        customers = []
+        for customer_id, (category, qty) in customer_tastes.items():
+            taste = self.category_to_taste.get(category, '🥦 balanced shoppers')
+            customers.append({
+                'customer_id': customer_id,
+                'taste': taste,
+            })
+            
+            if customer_id in existing_ids:
+                self.db.execute_query(
+                    """UPDATE customer_segment_assignment
+                       SET product_preference = %s,
+                           assigned_date = CURRENT_DATE
+                       WHERE customer_id = %s""",
+                    [taste, customer_id]
+                )
+            else:
+                self.db.execute_query(
+                    """INSERT INTO customer_segment_assignment
+                       (customer_id, product_preference, assigned_date)
+                       VALUES (%s, %s, CURRENT_DATE)""",
+                    [customer_id, taste]
+                )
+
+        return customers
+
+    def run(self, mode='rfm'):
+        if mode == 'taste':
+            return self.cluster_by_taste_preferences()
+        
+        # Original RFM clustering sync
         customers = self.get_cluster_assignments()
         if not customers:
             return []

@@ -2,6 +2,11 @@
 import streamlit as st
 import sys, os
 import streamlit.components.v1 as components
+import plotly.express as px
+import numpy as np
+import joblib
+import json
+from pathlib import Path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.db_connection import DatabaseConnection
 from scripts.offers_engine import OffersEngine
@@ -174,6 +179,39 @@ def _load_taste_preferences(selected_segs_tuple):
 
 
 @st.cache_data(ttl=120, show_spinner=False)
+def _load_segment_taste_matrix(selected_segs_tuple):
+    db = DatabaseConnection()
+    segment_col = _assignment_segment_column()
+    taste_col = _assignment_taste_column()
+
+    if not selected_segs_tuple:
+        return pd.DataFrame(columns=["segment_name", "taste_preference", "customer_count"])
+
+    seg_placeholders = ','.join(['%s'] * len(selected_segs_tuple))
+
+    if taste_col:
+        taste_expr = f"COALESCE(NULLIF(TRIM(csa.{taste_col}::text), ''), 'Unknown')"
+    else:
+        taste_expr = "'Unknown'"
+
+    rows = db.fetch_all(f"""
+        SELECT
+            cs.segment_name,
+            {taste_expr} AS taste_preference,
+            COUNT(DISTINCT c.customer_id) AS customer_count
+        FROM customers c
+        JOIN customer_segment_assignment csa ON c.customer_id = csa.customer_id
+        JOIN customer_segments cs ON csa.{segment_col} = cs.segment_id
+        WHERE c.is_active = TRUE
+          AND cs.segment_name IN ({seg_placeholders})
+        GROUP BY cs.segment_name, taste_preference
+        ORDER BY cs.segment_name, customer_count DESC
+    """, list(selected_segs_tuple))
+
+    return pd.DataFrame(rows, columns=["segment_name", "taste_preference", "customer_count"])
+
+
+@st.cache_data(ttl=120, show_spinner=False)
 def _load_eligible(selected_segs_tuple, selected_tastes_tuple):
     db = DatabaseConnection()
     segment_col = _assignment_segment_column()
@@ -213,6 +251,86 @@ def _load_eligible(selected_segs_tuple, selected_tastes_tuple):
                  c.promotional_emails_allowed{taste_group}
         ORDER BY total_spent DESC
     """, params)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_customer_behavior_snapshot(customer_id):
+    db = DatabaseConnection()
+    row = db.fetch_one(
+        """
+        SELECT
+            COALESCE(SUM(t.total_amount), 0) AS total_spent,
+            COALESCE(COUNT(t.transaction_id), 0) AS tx_count,
+            COALESCE(AVG(t.total_amount), 0) AS avg_basket,
+            COALESCE((CURRENT_DATE - MAX(DATE(t.transaction_date))), 90) AS days_inactive
+        FROM transactions t
+        WHERE t.customer_id = %s
+        """,
+        [customer_id],
+    )
+    if not row:
+        return {
+            "total_spent": 0.0,
+            "tx_count": 0,
+            "avg_basket": 0.0,
+            "days_inactive": 90,
+        }
+    return {
+        "total_spent": float(row[0] or 0.0),
+        "tx_count": int(row[1] or 0),
+        "avg_basket": float(row[2] or 0.0),
+        "days_inactive": int(row[3] or 90),
+    }
+
+
+@st.cache_resource(show_spinner=False)
+def _load_churn_model():
+    model_path = Path(__file__).resolve().parent.parent / "ml" / "saved_models" / "churn_model.pkl"
+    if not model_path.exists():
+        return None, str(model_path)
+    model = joblib.load(model_path)
+    return model, str(model_path)
+
+
+def _predict_churn_live(model, total_spent, days_inactive):
+    features = np.array([[float(total_spent), float(days_inactive)]])
+    pred = int(model.predict(features)[0])
+    if hasattr(model, "predict_proba"):
+        risk_prob = float(model.predict_proba(features)[0][1])
+    else:
+        risk_prob = 1.0 if pred == 1 else 0.0
+    return pred, risk_prob
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _load_churn_model_metadata(model_path_str):
+    model_path = Path(model_path_str)
+    meta_path = model_path.with_name(f"{model_path.stem}_meta.json")
+    model_time = None
+    if model_path.exists():
+        model_time = pd.to_datetime(model_path.stat().st_mtime, unit="s").strftime("%Y-%m-%d %H:%M:%S")
+
+    if not meta_path.exists():
+        return {
+            "trained_at": model_time,
+            "training_rows": None,
+            "churn_ratio": None,
+            "features": None,
+            "model_type": None,
+            "meta_found": False,
+        }
+
+    with open(meta_path, "r", encoding="utf-8") as meta_file:
+        meta = json.load(meta_file)
+
+    return {
+        "trained_at": meta.get("trained_at") or model_time,
+        "training_rows": meta.get("training_rows"),
+        "churn_ratio": meta.get("churn_ratio"),
+        "features": meta.get("features"),
+        "model_type": meta.get("model_type"),
+        "meta_found": True,
+    }
 
 
 def _build_preview(tmpl, campaign_name, custom_message,
@@ -376,6 +494,51 @@ def show_promotions():
             col_preview.info("Select a segment to see the preview.")
             return
 
+        matrix_df = _load_segment_taste_matrix(tuple(selected_segs))
+        if not matrix_df.empty:
+            st.markdown("##### Audience Opportunity Matrix")
+            st.caption("Rows: RFM segments · Columns: taste clusters · Cells: active customer count")
+
+            matrix = matrix_df.pivot_table(
+                index="segment_name",
+                columns="taste_preference",
+                values="customer_count",
+                aggfunc="sum",
+                fill_value=0,
+            )
+
+            row_order = [seg for seg in selected_segs if seg in matrix.index]
+            if row_order:
+                matrix = matrix.reindex(row_order)
+
+            col_order = matrix.sum(axis=0).sort_values(ascending=False).index.tolist()
+            matrix = matrix[col_order]
+
+            fig = px.imshow(
+                matrix,
+                text_auto=True,
+                aspect="auto",
+                color_continuous_scale="Blues",
+                labels={"x": "Taste Cluster", "y": "RFM Segment", "color": "Customers"},
+            )
+            fig.update_layout(
+                height=max(300, 140 + 40 * len(matrix.index)),
+                margin=dict(l=10, r=10, t=10, b=10),
+                coloraxis_colorbar=dict(title="Customers"),
+            )
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+            top_pair = matrix.stack().idxmax() if not matrix.empty else None
+            top_count = int(matrix.max().max()) if not matrix.empty else 0
+            if top_pair and top_count > 0:
+                top_segment, top_taste = top_pair
+                st.info(
+                    f"Biggest opportunity: {top_count} customers in '{top_segment}' × '{top_taste}'. "
+                    "Use this overlap to shape your campaign product and message."
+                )
+        else:
+            st.info("No segment-taste overlap data available yet for the selected segments.")
+
         taste_pref_rows = _load_taste_preferences(tuple(selected_segs))
         if taste_pref_rows:
             taste_options = {row[0]: row[1] for row in taste_pref_rows}
@@ -418,6 +581,107 @@ def show_promotions():
                     lambda x: f"Rs.{float(x):,.2f}"
                 )
                 st.dataframe(df_e, use_container_width=True, hide_index=True)
+
+        st.markdown("##### Pattern 2 — Real-Time Churn Inference")
+        churn_model, churn_model_path = _load_churn_model()
+
+        if churn_model is None:
+            st.warning(
+                "Churn model not found yet. Train it once with: "
+                "`python scripts/train_churn_model.py`, then reload this page."
+            )
+        else:
+            model_meta = _load_churn_model_metadata(churn_model_path)
+            churn_ratio = model_meta.get("churn_ratio")
+            churn_ratio_text = f"{float(churn_ratio):.1%}" if churn_ratio is not None else "N/A"
+            features = model_meta.get("features") or ["total_spent", "days_inactive"]
+            st.markdown(
+                f'<div class="metric-card" style="margin-bottom:10px;padding:12px 14px;">'
+                f'<div style="font-weight:700;font-size:13px;margin-bottom:6px;">🧠 Model Info</div>'
+                f'<div style="font-size:12px;line-height:1.8;">'
+                f'<strong>Type:</strong> {model_meta.get("model_type") or "RandomForestClassifier"}<br>'
+                f'<strong>Last Retrained:</strong> {model_meta.get("trained_at") or "Unknown"}<br>'
+                f'<strong>Training Rows:</strong> {model_meta.get("training_rows") or "N/A"}<br>'
+                f'<strong>Churn Ratio:</strong> {churn_ratio_text}<br>'
+                f'<strong>Features:</strong> {", ".join(features)}'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+
+            churn_customer_options = []
+            for row in eligible_rows:
+                churn_customer_options.append(
+                    {
+                        "label": f"{row[1]} ({row[3]}) · Spent Rs.{float(row[6]):,.0f}",
+                        "id": row[0],
+                        "name": row[1],
+                        "segment": row[3],
+                    }
+                )
+
+            if churn_customer_options:
+                default_pick = churn_customer_options[0]
+                selected_label = st.selectbox(
+                    "Quick Pick Customer",
+                    options=[o["label"] for o in churn_customer_options],
+                    key="churn_customer_pick",
+                )
+                selected_customer = next(
+                    (o for o in churn_customer_options if o["label"] == selected_label),
+                    default_pick,
+                )
+                snapshot = _load_customer_behavior_snapshot(selected_customer["id"])
+            else:
+                selected_customer = {"name": "Selected Customer", "segment": "Unknown"}
+                snapshot = {
+                    "total_spent": 0.0,
+                    "tx_count": 0,
+                    "avg_basket": 0.0,
+                    "days_inactive": 30,
+                }
+
+            with st.form("live_churn_prediction_form"):
+                c_pred_1, c_pred_2 = st.columns(2)
+                with c_pred_1:
+                    pred_total_spent = st.number_input(
+                        "Total Amount Spent (LKR)",
+                        min_value=0.0,
+                        value=float(snapshot["total_spent"]),
+                        step=100.0,
+                    )
+                with c_pred_2:
+                    pred_days_inactive = st.number_input(
+                        "Days Since Last Purchase",
+                        min_value=0,
+                        value=int(snapshot["days_inactive"]),
+                        step=1,
+                    )
+
+                st.caption(
+                    f"Model: {Path(churn_model_path).name} · Customer: {selected_customer['name']} "
+                    f"({selected_customer['segment']})"
+                )
+                run_live_pred = st.form_submit_button("Predict Churn Risk", use_container_width=True)
+
+            if run_live_pred:
+                with st.spinner("AI is analyzing customer behavior..."):
+                    try:
+                        pred_label, pred_prob = _predict_churn_live(
+                            churn_model,
+                            pred_total_spent,
+                            pred_days_inactive,
+                        )
+                        if pred_label == 1:
+                            st.error(
+                                f"HIGH RISK: Likely to churn (confidence: {pred_prob:.1%}). "
+                                "Suggested action: trigger a win-back campaign now."
+                            )
+                        else:
+                            st.success(
+                                f"LOW RISK: Customer appears active (churn risk: {pred_prob:.1%})."
+                            )
+                    except Exception as ex:
+                        st.error(f"Prediction failed: {ex}")
 
         st.markdown("---")
 
