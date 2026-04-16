@@ -34,7 +34,7 @@ class AprioriEngine:
         print(f"✅ Loaded {len(transactions)} transactions")
         return transactions
 
-    def run_apriori(self, transactions, min_support=0.01, min_confidence=0.1):
+    def run_apriori(self, transactions, min_support=0.02, min_confidence=0.20):
         """Run Apriori algorithm and return rules"""
         if not transactions:
             return None
@@ -61,7 +61,7 @@ class AprioriEngine:
 
         print(f"✅ Found {len(frequent_itemsets)} frequent itemsets")
 
-        # Generate association rules
+        # Generate association rules (notebook-aligned confidence threshold)
         rules = association_rules(
             frequent_itemsets,
             metric="confidence",
@@ -72,11 +72,20 @@ class AprioriEngine:
             print("⚠️ No rules generated — try lowering min_confidence")
             return None
 
+        # Notebook-aligned filters
+        rules = rules[(rules['lift'] >= 1.1) & (rules['support'] >= 0.01)]
+        rules['antecedent_len'] = rules['antecedents'].apply(len)
+        rules['consequent_len'] = rules['consequents'].apply(len)
+
         # Keep only single item → single item rules
         rules = rules[
-            rules['antecedents'].apply(lambda x: len(x) == 1) &
-            rules['consequents'].apply(lambda x: len(x) == 1)
+            (rules['antecedent_len'] == 1) &
+            (rules['consequent_len'] == 1)
         ].copy()
+
+        if rules.empty:
+            print("⚠️ Rules exist but none passed notebook filter constraints")
+            return None
 
         # Extract product codes
         rules['antecedent_code'] = rules['antecedents'].apply(
@@ -86,8 +95,15 @@ class AprioriEngine:
             lambda x: list(x)[0]
         )
 
-        # Sort by lift
-        rules = rules.sort_values('lift', ascending=False)
+        # Remove symmetric duplicates (A->B vs B->A) using canonical key
+        rules['rule_key'] = rules.apply(
+            lambda row: tuple(sorted([row['antecedent_code'], row['consequent_code']])),
+            axis=1,
+        )
+        rules = rules.drop_duplicates('rule_key')
+
+        # Notebook-aligned ranking
+        rules = rules.sort_values(['lift', 'confidence', 'support'], ascending=False)
 
         print(f"✅ Generated {len(rules)} association rules")
         print("\nTop 5 rules:")
@@ -214,8 +230,8 @@ class AprioriEngine:
         # Try with low support since we have small dataset
         rules = self.run_apriori(
             transactions,
-            min_support=0.01,
-            min_confidence=0.05
+            min_support=0.02,
+            min_confidence=0.20
         )
 
         if rules is not None:
