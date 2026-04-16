@@ -404,7 +404,7 @@ elif page == "waste_monitor":
     from ui.sidebar           import render_sidebar
     from pages.dashboard      import show_dashboard
     from pages.waste_records  import show_waste_records
-    from pages.ai_performance import show_ai_performance_comparison, show_ai_performance_analytics ,show_rl_model_comparison, show_rl_live_performance
+    from pages.ai_performance import show_ai_performance_comparison, show_ai_performance_analytics , show_rl_predictions
     from pages.savings_report import show_savings_report
 
     inject_styles()
@@ -478,9 +478,7 @@ elif page == "waste_monitor":
         show_savings_report()
 
     with tab6:
-        show_rl_model_comparison()
-        st.divider()
-        show_rl_live_performance(start, end) 
+        show_rl_predictions() 
 
 # ── Fallback ───────────────────────────────────────────────────────────────────
 else:

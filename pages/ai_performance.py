@@ -221,60 +221,46 @@ def show_ai_performance(start: date, end: date) -> None:
 # Added below existing code — does not modify any existing functions above
 # ══════════════════════════════════════════════════════════════════════════════
 
-from data.ai_performance_repository import fetch_rl_performance
-from services.rl_accuracy_service   import score_predictions, rl_summary_metrics
+import os
+
+_RL_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "ml", "rl_data")
+
+
+@st.cache_data
+def _load_reward_dataset() -> pd.DataFrame:
+    path = os.path.join(_RL_DATA_DIR, "xgb_reward_dataset.csv")
+    df   = pd.read_csv(path)
+    df["transaction_date"] = pd.to_datetime(df["transaction_date"])
+    df["year_month"]       = df["transaction_date"].dt.to_period("M").astype(str)
+    return df
+
+
+@st.cache_data
+def _load_model_comparison() -> pd.DataFrame:
+    path = os.path.join(_RL_DATA_DIR, "model_comparison.csv")
+    return pd.read_csv(path)
 
 
 def show_rl_model_comparison() -> None:
     """
-    Shows a static before/after comparison of original model vs RL v2.
-    Based on walk-forward evaluation results from Colab (historical data).
+    RL Model Improvement — before/after comparison + graphs from CSV.
     """
     st.markdown(
         "<h1 style='font-size:3.5rem;font-weight:900;letter-spacing:-1px;'>"
         "RL Model Improvement</h1>",
         unsafe_allow_html=True,
     )
-    st.caption("Results from offline reinforcement learning evaluation on 27 months of historical data.")
+    st.caption("Based on reinforcement learning evaluation on 27 months of historical data.")
     st.divider()
 
-    # ── Static comparison table from Colab results ─────────────────────────
     comparison = pd.DataFrame([
-        {
-            "Model"           : "Random Forest (original)",
-            "MAPE %"          : 3.04,
-            "Perfect Pred %"  : 83.6,
-            "Avg Reward"      : 5.42,
-            "MAE"             : 1.863,
-            "R²"              : 0.9914,
-        },
-        {
-            "Model"           : "Random Forest (RL v2)",
-            "MAPE %"          : 1.82,
-            "Perfect Pred %"  : 91.7,
-            "Avg Reward"      : 7.67,
-            "MAE"             : 1.060,
-            "R²"              : 0.9958,
-        },
-        {
-            "Model"           : "XGBoost (original)",
-            "MAPE %"          : 1.88,
-            "Perfect Pred %"  : 94.9,
-            "Avg Reward"      : 8.76,
-            "MAE"             : 1.136,
-            "R²"              : 0.9977,
-        },
-        {
-            "Model"           : "XGBoost RL v2  🏆",
-            "MAPE %"          : 1.23,
-            "Perfect Pred %"  : 98.5,
-            "Avg Reward"      : 9.66,
-            "MAE"             : 0.717,
-            "R²"              : 0.9989,
-        },
+        {"Model": "Random Forest (original)", "MAPE %": 3.04, "Perfect Pred %": 83.6, "Avg Reward": 5.42, "MAE": 1.863, "R²": 0.9914},
+        {"Model": "Random Forest (RL v2)",    "MAPE %": 1.82, "Perfect Pred %": 91.7, "Avg Reward": 7.67, "MAE": 1.060, "R²": 0.9958},
+        {"Model": "XGBoost (original)",       "MAPE %": 1.88, "Perfect Pred %": 94.9, "Avg Reward": 8.76, "MAE": 1.136, "R²": 0.9977},
+        {"Model": "XGBoost RL v2  🏆",        "MAPE %": 1.23, "Perfect Pred %": 98.5, "Avg Reward": 9.66, "MAE": 0.717, "R²": 0.9989},
     ])
 
-    # ── Key metrics for best model ──────────────────────────────────────────
+    # ── Key metrics ────────────────────────────────────────────────────────
     k1, k2, k3, k4 = st.columns(4)
     with k1: st.metric("Best Model",          "XGBoost RL v2",  delta="RL retrained")
     with k2: st.metric("Perfect Predictions", "98.5%",          delta="+3.6% vs original")
@@ -283,12 +269,7 @@ def show_rl_model_comparison() -> None:
 
     st.divider()
 
-    # ── Comparison table ────────────────────────────────────────────────────
-    st.subheader("Model Comparison — All 4 Models")
-    st.dataframe(comparison, use_container_width=True, hide_index=True)
-
-    # ── Bar chart — Perfect Predictions ────────────────────────────────────
-    st.divider()
+    # ── Perfect Prediction Rate & MAPE comparison ──────────────────────────
     c1, c2 = st.columns(2)
     with c1:
         st.subheader("Perfect Prediction Rate")
@@ -300,11 +281,40 @@ def show_rl_model_comparison() -> None:
             text="Perfect Pred %",
         )
         fig.update_traces(texttemplate="%{text:.1f}%", textposition="outside")
-        fig.update_layout(height=380, margin=dict(t=20, b=40, l=30, r=10),
-                          showlegend=False)
+        fig.update_layout(height=380, margin=dict(t=20, b=60, l=30, r=10), showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
     with c2:
+        st.subheader("MAPE % (Lower is Better)")
+        fig = px.bar(
+            comparison, x="Model", y="MAPE %",
+            color="MAPE %",
+            color_continuous_scale=["#16a34a", "#fca5a5"],
+            range_color=[1, 4],
+            text="MAPE %",
+        )
+        fig.update_traces(texttemplate="%{text:.2f}%", textposition="outside")
+        fig.update_layout(height=380, margin=dict(t=20, b=60, l=30, r=10), showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # ── MAE & Avg Reward ───────────────────────────────────────────────────
+    c3, c4 = st.columns(2)
+    with c3:
+        st.subheader("MAE (Lower is Better)")
+        fig = px.bar(
+            comparison, x="Model", y="MAE",
+            color="MAE",
+            color_continuous_scale=["#16a34a", "#fca5a5"],
+            range_color=[0.5, 2],
+            text="MAE",
+        )
+        fig.update_traces(texttemplate="%{text:.3f}", textposition="outside")
+        fig.update_layout(height=380, margin=dict(t=20, b=60, l=30, r=10), showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    with c4:
         st.subheader("Average Reward Score")
         fig = px.bar(
             comparison, x="Model", y="Avg Reward",
@@ -314,11 +324,16 @@ def show_rl_model_comparison() -> None:
             text="Avg Reward",
         )
         fig.update_traces(texttemplate="%{text:.2f}", textposition="outside")
-        fig.update_layout(height=380, margin=dict(t=20, b=40, l=30, r=10),
-                          showlegend=False)
+        fig.update_layout(height=380, margin=dict(t=20, b=60, l=30, r=10), showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
-    # ── Reward function explanation ─────────────────────────────────────────
+    st.divider()
+
+    # ── Comparison table ───────────────────────────────────────────────────
+    st.subheader("Full Model Comparison Table")
+    st.dataframe(comparison, use_container_width=True, hide_index=True)
+
+    # ── Reward function explanation ────────────────────────────────────────
     st.divider()
     st.subheader("How the Reward Function Works")
     col1, col2, col3 = st.columns(3)
@@ -330,64 +345,113 @@ def show_rl_model_comparison() -> None:
         st.error("**❌ Under-Predicted (Stockout)**  \nMissed sales  \nPenalty: **−5 pts per unit**")
 
 
-def show_rl_live_performance(start: date, end: date) -> None:
+def show_rl_predictions() -> None:
     """
-    Shows live RL performance data from the ai_performance Supabase table.
-    Populated as real predictions are made and actual sales are recorded.
+    RL Predictions — graphs loaded from xgb_reward_dataset.csv.
     """
     st.markdown(
         "<h1 style='font-size:3.5rem;font-weight:900;letter-spacing:-1px;'>"
-        "RL Live Performance</h1>",
+        "RL Predictions</h1>",
         unsafe_allow_html=True,
     )
-    st.caption("Live reward scores from ai_performance table — updated as actual sales come in.")
+    st.caption("XGBoost RL v2 predictions vs actual sales — 27 months of historical data.")
     st.divider()
 
-    df = fetch_rl_performance(start, end)
-
-    if df.empty:
-        st.info(
-            "No RL performance records yet for the selected period.  \n"
-            "Records will appear here once the RL model starts making live predictions."
-        )
+    try:
+        df = _load_reward_dataset()
+    except FileNotFoundError:
+        st.error("CSV file not found. Make sure xgb_reward_dataset.csv is in ml/rl_data/.")
         return
 
-    # Score any evaluated rows
-    if "actual_sales" in df.columns and "predicted_demand" in df.columns:
-        df = score_predictions(df)
+    # ── Filters ────────────────────────────────────────────────────────────
+    f1, f2 = st.columns(2)
+    with f1:
+        products    = ["All"] + sorted(df["product_code"].unique().tolist())
+        sel_product = st.selectbox("Filter by Product", products, key="rl_prod_filter")
+    with f2:
+        months      = ["All"] + sorted(df["year_month"].unique().tolist())
+        sel_month   = st.selectbox("Filter by Month", months, key="rl_month_filter")
 
-    m = rl_summary_metrics(df)
-    if m:
-        k1, k2, k3, k4 = st.columns(4)
-        with k1: st.metric("Evaluated Records", m["count"])
-        with k2: st.metric("Avg Reward",        f"{m['avg_reward']} / 10")
-        with k3: st.metric("Perfect Pred %",    f"{m['perfect_pct']}%")
-        with k4: st.metric("MAPE",              f"{m['mape']:.2f}%")
+    filtered = df.copy()
+    if sel_product != "All":
+        filtered = filtered[filtered["product_code"] == sel_product]
+    if sel_month != "All":
+        filtered = filtered[filtered["year_month"] == sel_month]
+
+    # ── Summary metrics ────────────────────────────────────────────────────
+    perfect_pct = float((filtered["reward"] == 10.0).mean() * 100)
+    avg_reward  = float(filtered["reward"].mean())
+    mae         = float((filtered["predicted_quantity"] - filtered["quantity_sold"]).abs().mean())
+
+    k1, k2, k3, k4 = st.columns(4)
+    with k1: st.metric("Total Predictions", f"{len(filtered):,}")
+    with k2: st.metric("Perfect Pred %",    f"{perfect_pct:.1f}%")
+    with k3: st.metric("Avg Reward",        f"{avg_reward:.2f} / 10")
+    with k4: st.metric("MAE",               f"{mae:.3f}")
 
     st.divider()
-    st.subheader("RL Prediction Records")
 
-    disp_cols = ["forecast_date", "product_code", "predicted_demand",
-                 "actual_sales", "error_value", "error_percentage"]
-    disp = df[[c for c in disp_cols if c in df.columns]].copy()
-
-    if "reward" in df.columns:
-        disp["reward"] = df["reward"]
-
-    if "forecast_date"    in disp.columns:
-        disp["forecast_date"] = disp["forecast_date"].apply(fmt_date)
-    if "predicted_demand" in disp.columns:
-        disp["predicted_demand"] = disp["predicted_demand"].apply(lambda x: f"{x:.2f}")
-    if "actual_sales"     in disp.columns:
-        disp["actual_sales"] = disp["actual_sales"].apply(
-            lambda x: f"{x:.2f}" if pd.notna(x) else "Pending"
+    # ── Predicted vs Actual — monthly aggregated line chart ───────────────
+    st.subheader("Predicted vs Actual Sales (Monthly Average)")
+    monthly = (
+        filtered.groupby("year_month")
+        .agg(
+            Predicted=("predicted_quantity", "mean"),
+            Actual   =("quantity_sold",      "mean"),
         )
-    if "error_percentage" in disp.columns:
-        disp["error_percentage"] = disp["error_percentage"].apply(fmt_pct)
-    if "reward"           in disp.columns:
-        disp["reward"] = disp["reward"].apply(
-            lambda x: f"{x:.2f}" if pd.notna(x) else "—"
-        )
+        .reset_index()
+        .sort_values("year_month")
+    )
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=monthly["year_month"], y=monthly["Predicted"],
+        mode="lines+markers", name="RL Predicted",
+        line=dict(color="#2563eb", width=2),
+    ))
+    fig.add_trace(go.Scatter(
+        x=monthly["year_month"], y=monthly["Actual"],
+        mode="lines+markers", name="Actual Sales",
+        line=dict(color="#16a34a", width=2),
+    ))
+    fig.update_layout(
+        height=420, xaxis_title="Month", yaxis_title="Avg Quantity",
+        hovermode="x unified", margin=dict(t=20, b=40, l=40, r=20),
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-    disp.columns = [c.replace("_", " ").title() for c in disp.columns]
-    st.dataframe(disp, use_container_width=True, hide_index=True)
+    st.divider()
+
+    # ── Product-level accuracy ─────────────────────────────────────────────
+    st.subheader("Product-Level Accuracy")
+    prod = (
+        filtered.groupby("product_code")
+        .agg(
+            Perfect_Pct =("reward",             lambda x: (x == 10.0).mean() * 100),
+            Avg_Reward  =("reward",             "mean"),
+            Records     =("predicted_quantity", "count"),
+        )
+        .round(2).reset_index()
+    )
+
+    p1, p2 = st.columns(2)
+    with p1:
+        best = prod.nlargest(10, "Perfect_Pct")
+        fig  = px.bar(
+            best, x="product_code", y="Perfect_Pct",
+            title="Top 10 Best Products (Perfect Pred %)",
+            color="Perfect_Pct",
+            color_continuous_scale=["#7af2a6", "#16a34a", "#14532d"],
+        )
+        fig.update_layout(height=380, margin=dict(t=40, b=60, l=30, r=10))
+        st.plotly_chart(fig, use_container_width=True)
+
+    with p2:
+        worst = prod.nsmallest(10, "Perfect_Pct")
+        fig   = px.bar(
+            worst, x="product_code", y="Perfect_Pct",
+            title="Top 10 Products Needing Improvement",
+            color="Perfect_Pct",
+            color_continuous_scale=["#dc2626", "#fca5a5"],
+        )
+        fig.update_layout(height=380, margin=dict(t=40, b=60, l=30, r=10))
+        st.plotly_chart(fig, use_container_width=True)
