@@ -76,7 +76,7 @@ class EmailSender:
             </tr>
             """
 
-        html = f"""
+        html_body = f"""
         <html>
         <body style="font-family:Arial,sans-serif;background:#f5f5f5;margin:0;padding:20px;">
             <div style="max-width:600px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,0.1);">
@@ -129,7 +129,7 @@ class EmailSender:
         </body>
         </html>
         """
-        return html
+        return html_body
 
     def send_email(self, to_email, subject, html_content):
         """Send a single email"""
