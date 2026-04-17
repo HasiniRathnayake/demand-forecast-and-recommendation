@@ -7,6 +7,7 @@ from scripts.db_connection import DatabaseConnection
 from scripts.apriori_engine import AprioriEngine
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from datetime import date, datetime, timedelta
 
 # ── Segment config ────────────────────────────────────────────────────────────
@@ -407,13 +408,8 @@ def show_customer_dashboard(customer_id):
                 )
         else:
             st.markdown(
-
-                '<div class="alert-info">No promotions yet — '
-                'check back soon for exclusive offers!</div>',
-
                 '<div class="alert-info">No active promotions right now — '
                 'check back soon for fresh offers!</div>',
-
                 unsafe_allow_html=True
             )
 
@@ -425,7 +421,7 @@ def show_customer_dashboard(customer_id):
                     unsafe_allow_html=True)
 
         # Show which method was used
-        if recommendations and recommendations[0]['confidence'] > 0:
+        if recommendations and recommendations[0].get('confidence', 0) > 0:
             st.markdown(
                 '<div class="alert-success" style="margin-bottom:16px;">'
                 '🤖 <strong>Powered by Apriori Algorithm</strong> — '
@@ -500,14 +496,39 @@ def show_customer_dashboard(customer_id):
                 fav_products,
                 columns=['Product', 'Category', 'Total Qty', 'Times Bought']
             )
-            fig = px.bar(
-                df_p, x='Product', y='Times Bought',
-                color='Category',
-                color_discrete_sequence=px.colors.qualitative.Bold
+            # Plotly can raise KeyError when category order contains values not present
+            # in grouped data; normalize to plain strings and provide explicit orders.
+            df_p['Product'] = df_p['Product'].astype(str).str.strip()
+            df_p['Category'] = df_p['Category'].astype(str).str.strip()
+            df_p = df_p[df_p['Product'] != '']
+            df_p = df_p[df_p['Category'] != '']
+
+            # Use graph_objects instead of px.bar to avoid category group lookup KeyError.
+            palette = px.colors.qualitative.Bold
+            categories = sorted(df_p['Category'].dropna().unique().tolist())
+            color_map = {cat: palette[i % len(palette)] for i, cat in enumerate(categories)}
+            bar_colors = [color_map.get(cat, '#2563EB') for cat in df_p['Category']]
+
+            fig = go.Figure(
+                data=[
+                    go.Bar(
+                        x=df_p['Product'],
+                        y=df_p['Times Bought'],
+                        marker_color=bar_colors,
+                        customdata=df_p[['Category']],
+                        hovertemplate=(
+                            'Product: %{x}<br>'
+                            'Times Bought: %{y}<br>'
+                            'Category: %{customdata[0]}<extra></extra>'
+                        ),
+                    )
+                ]
             )
             fig.update_layout(
                 height=300,
                 margin=dict(t=20, b=20),
+                xaxis_title='Product',
+                yaxis_title='Times Bought',
                 plot_bgcolor='rgba(0,0,0,0)',
                 paper_bgcolor='rgba(0,0,0,0)'
             )
