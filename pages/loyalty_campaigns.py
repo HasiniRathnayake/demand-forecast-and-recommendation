@@ -135,6 +135,14 @@ def _assignment_segment_column():
     return 'segment_id'
 
 
+def _segment_join_condition(segment_col: str, csa_alias: str = "csa", cs_alias: str = "cs") -> str:
+    """Return a join predicate that supports both id-based and name-based assignments."""
+    return (
+        f"({csa_alias}.{segment_col}::text = {cs_alias}.segment_id::text "
+        f"OR LOWER(TRIM({csa_alias}.{segment_col}::text)) = LOWER(TRIM({cs_alias}.segment_name::text)))"
+    )
+
+
 def _assignment_taste_column():
     db = DatabaseConnection()
     cols = db.fetch_all(
@@ -157,11 +165,12 @@ def _assignment_taste_column():
 def _load_segments():
     db = DatabaseConnection()
     segment_col = _assignment_segment_column()
+    join_condition = _segment_join_condition(segment_col, "csa", "cs")
     return db.fetch_all(f"""
         SELECT cs.segment_name, COUNT(csa.customer_id) as count
         FROM customer_segments cs
         LEFT JOIN customer_segment_assignment csa
-               ON cs.segment_id = csa.{segment_col}
+               ON {join_condition}
         GROUP BY cs.segment_name
         HAVING COUNT(csa.customer_id) > 0
         ORDER BY count DESC
@@ -172,6 +181,7 @@ def _load_segments():
 def _load_taste_preferences(selected_segs_tuple):
     db = DatabaseConnection()
     segment_col = _assignment_segment_column()
+    join_condition = _segment_join_condition(segment_col, "csa", "cs")
     taste_col = _assignment_taste_column()
 
     if not selected_segs_tuple or not taste_col:
@@ -183,7 +193,7 @@ def _load_taste_preferences(selected_segs_tuple):
                COUNT(DISTINCT c.customer_id) as customer_count
         FROM customers c
         JOIN customer_segment_assignment csa ON c.customer_id = csa.customer_id
-        JOIN customer_segments cs ON csa.{segment_col} = cs.segment_id
+                JOIN customer_segments cs ON {join_condition}
         WHERE c.is_active = TRUE
           AND cs.segment_name IN ({seg_placeholders})
           AND csa.{taste_col} IS NOT NULL
@@ -204,6 +214,7 @@ def _load_taste_preferences(selected_segs_tuple):
 def _load_segment_taste_matrix(selected_segs_tuple):
     db = DatabaseConnection()
     segment_col = _assignment_segment_column()
+    join_condition = _segment_join_condition(segment_col, "csa", "cs")
     taste_col = _assignment_taste_column()
 
     if not selected_segs_tuple:
@@ -223,7 +234,7 @@ def _load_segment_taste_matrix(selected_segs_tuple):
             COUNT(DISTINCT c.customer_id) AS customer_count
         FROM customers c
         JOIN customer_segment_assignment csa ON c.customer_id = csa.customer_id
-        JOIN customer_segments cs ON csa.{segment_col} = cs.segment_id
+                JOIN customer_segments cs ON {join_condition}
         WHERE c.is_active = TRUE
           AND cs.segment_name IN ({seg_placeholders})
         GROUP BY cs.segment_name, taste_preference
@@ -246,6 +257,7 @@ def _load_segment_taste_matrix(selected_segs_tuple):
 def _load_eligible(selected_segs_tuple, selected_tastes_tuple):
     db = DatabaseConnection()
     segment_col = _assignment_segment_column()
+    join_condition = _segment_join_condition(segment_col, "csa", "cs")
     taste_col = _assignment_taste_column()
 
     seg_placeholders = ','.join(['%s'] * len(selected_segs_tuple))
@@ -271,7 +283,7 @@ def _load_eligible(selected_segs_tuple, selected_tastes_tuple):
                {taste_select}
         FROM customers c
         JOIN customer_segment_assignment csa ON c.customer_id = csa.customer_id
-        JOIN customer_segments cs ON csa.{segment_col} = cs.segment_id
+        JOIN customer_segments cs ON {join_condition}
         LEFT JOIN transactions t ON c.customer_id = t.customer_id
         WHERE {' AND '.join(where_clause)}
         GROUP BY c.customer_id, c.first_name, c.email,
