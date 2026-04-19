@@ -57,34 +57,6 @@ def fetch_product_sales(product_code: str, days: int = DEFAULT_HISTORY_DAYS) -> 
         return []
 
 
-def fetch_past_forecasts(product_code: str, days_back: int = 14) -> list[dict]:
-    """
-    Fetch AI-generated forecasts for dates BEFORE today from demand_forecasts.
-    These are past predictions the model made on previous runs.
-    Used to show a 'past predictions' line on the forecast chart.
-    """
-    from datetime import datetime, timedelta
-    if not product_code:
-        return []
-    try:
-        client = get_client()
-        today     = datetime.now().date().isoformat()
-        past_date = (datetime.now().date() - timedelta(days=days_back)).isoformat()
-        resp = (
-            client.table("demand_forecasts")
-            .select("forecast_date, predicted_demand, model_version")
-            .eq("product_code", product_code.strip().upper())
-            .eq("is_manual_override", False)
-            .gte("forecast_date", past_date)
-            .lt("forecast_date", today)
-            .order("forecast_date")
-            .execute()
-        )
-        return resp.data or []
-    except Exception:
-        return []
-
-
 def fetch_overrides(product_code: str) -> list[dict]:
     """
     Fetch all manual override rows for a product from demand_forecasts.
