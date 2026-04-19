@@ -183,9 +183,29 @@ def _hybrid_forecast(model, prod_feats, actual_mean, actual_std,
     """
     start = datetime.now().date() + timedelta(days=1)
 
-    # Build normalized feature rows — all lag/rolling features = 1.0
-    # The model will output relative multipliers (e.g. 1.3 for Saturday)
-    # We then multiply by actual_mean to get real predictions
+    # Build feature rows using actual DB sales values as lag/rolling features
+    # This ensures each product gets different patterns based on its real sales history
+    # We use the actual recent values so the model can distinguish between products
+
+    # Build sales series from history for lag lookups
+    sales = pd.Series(dtype=float)
+    if not recent_values is None and len(recent_values) > 0:
+        sales = pd.Series(recent_values)
+
+    def get_lag(n):
+        """Get nth-from-last actual value as lag proxy."""
+        pos = min(n, len(recent_values))
+        return float(recent_values[-pos]) if pos > 0 else actual_mean
+
+    def get_roll(w, stat="mean"):
+        vals = recent_values[-w:] if len(recent_values) >= w else recent_values
+        if len(vals) == 0:
+            return actual_mean
+        if stat == "mean": return float(np.mean(vals))
+        if stat == "std":  return float(np.std(vals)) if len(vals)>1 else actual_std
+        if stat == "max":  return float(np.max(vals))
+        if stat == "min":  return float(np.min(vals))
+
     rows = []
     for i in range(forecast_days):
         day = start + timedelta(days=i)
@@ -195,7 +215,14 @@ def _hybrid_forecast(model, prod_feats, actual_mean, actual_std,
         is_wknd = int(dow >= 5)
         is_hol  = int(day.isoformat() in ALL_PUBLIC_HOLIDAYS)
 
-        # Normalized lags — all set to 1.0 so model outputs relative patterns
+        l1  = get_lag(1)
+        l7  = get_lag(7)
+        l14 = get_lag(14)
+        l30 = get_lag(30)
+        rm7  = get_roll(7)
+        rm14 = get_roll(14)
+        rm30 = get_roll(30)
+
         rows.append({
             "day_of_week":        dow,
             "is_weekend":         is_wknd,
@@ -214,23 +241,35 @@ def _hybrid_forecast(model, prod_feats, actual_mean, actual_std,
             "month_cos":          math.cos(2*math.pi*day.month/12),
             "day_of_year_sin":    math.sin(2*math.pi*doy/365),
             "day_of_year_cos":    math.cos(2*math.pi*doy/365),
-            # All lag/rolling = 1.0 → model outputs relative pattern
-            "lag_1":1.0,"lag_7":1.0,"lag_14":1.0,"lag_30":1.0,
-            "lag_diff_1_7":0.0,"lag_diff_7_30":0.0,
-            "rolling_7_mean":1.0,"rolling_14_mean":1.0,"rolling_30_mean":1.0,
-            "rolling_7_std":0.1,"rolling_7_max":1.2,"rolling_7_min":0.8,
-            "trend_7_30":0.0,"expanding_mean":1.0,
+            # Real lag/rolling values from actual DB history
+            "lag_1":  l1, "lag_7": l7, "lag_14": l14, "lag_30": l30,
+            "lag_diff_1_7":  l1 - l7,
+            "lag_diff_7_30": l7 - l30,
+            "rolling_7_mean":  rm7,
+            "rolling_14_mean": rm14,
+            "rolling_30_mean": rm30,
+            "rolling_7_std":   get_roll(7,"std"),
+            "rolling_7_max":   get_roll(7,"max"),
+            "rolling_7_min":   get_roll(7,"min"),
+            "trend_7_30":      rm7 - rm30,
+            "expanding_mean":  actual_mean,
             "is_promotion":0,"lag_1_x_promo":0,"promo_x_holiday":0,
             "promo_x_weekend":0,"promo_x_pre_holiday":0,
             "days_since_promo":30,
             "promo_response_rate":prod_feats["promo_response_rate"],
-            "category_encoded":   prod_feats["category_encoded"],
-            "brand_encoded":      prod_feats["brand_encoded"],
-            "category_mean_sales":1.0,"brand_mean_sales":1.0,
-            "category_median_sales":1.0,"brand_median_sales":1.0,
-            "product_global_mean":1.0,"product_global_std":0.2,
-            "product_global_max":2.0,"product_global_median":0.9,
-            "qty_vs_category_avg":1.0,"qty_vs_brand_avg":1.0,"qty_vs_product_avg":1.0,
+            "category_encoded":      prod_feats["category_encoded"],
+            "brand_encoded":         prod_feats["brand_encoded"],
+            "category_mean_sales":   prod_feats["category_mean_sales"],
+            "brand_mean_sales":      prod_feats["brand_mean_sales"],
+            "category_median_sales": prod_feats["category_median_sales"],
+            "brand_median_sales":    prod_feats["brand_median_sales"],
+            "product_global_mean":   prod_feats["product_global_mean"],
+            "product_global_std":    prod_feats["product_global_std"],
+            "product_global_max":    prod_feats["product_global_max"],
+            "product_global_median": prod_feats["product_global_median"],
+            "qty_vs_category_avg":   actual_mean / max(prod_feats["category_mean_sales"],1),
+            "qty_vs_brand_avg":      actual_mean / max(prod_feats["brand_mean_sales"],1),
+            "qty_vs_product_avg":    1.0,
         })
 
     X            = pd.DataFrame(rows)[FEATURE_COLS].values
@@ -248,8 +287,8 @@ def _hybrid_forecast(model, prod_feats, actual_mean, actual_std,
         if raw_mean > 0.01 and not np.isnan(raw) and not np.isinf(raw):
             # Scale raw prediction relative to its own mean, then multiply by actual_mean
             relative = float(raw) / raw_mean
-            # Cap relative to reasonable range (0.5x to 2.5x mean)
-            relative = max(0.5, min(relative, 2.5))
+            # Cap relative to reasonable range (0.7x to 1.8x mean)
+            relative = max(0.7, min(relative, 1.8))
             predicted = actual_mean * relative
         else:
             # Model produced unusable values — use statistical pattern directly
