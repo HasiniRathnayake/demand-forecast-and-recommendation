@@ -408,7 +408,7 @@ elif page == "waste_monitor":
     from ui.sidebar           import render_sidebar
     from pages.dashboard      import show_dashboard
     from pages.waste_records  import show_waste_records
-    from pages.ai_performance import show_ai_performance_comparison, show_ai_performance_analytics
+    from pages.ai_performance import show_ai_performance_comparison, show_ai_performance_analytics, show_rl_predictions
     from pages.savings_report import show_savings_report
 
     inject_styles()
@@ -457,12 +457,13 @@ elif page == "waste_monitor":
 
     st.markdown("---")
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📊 Dashboard",
         "🗑️ Waste Records",
         "🤖 Comparisons & Records",
         "📈 AI Performance",
         "💰 Savings Report",
+        "🧠 RL Performance",
     ])
 
     with tab1:
@@ -479,6 +480,9 @@ elif page == "waste_monitor":
 
     with tab5:
         show_savings_report()
+
+    with tab6:
+        show_rl_predictions()    
 
 # ── Fallback ───────────────────────────────────────────────────────────────────
 else:
