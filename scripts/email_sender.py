@@ -62,11 +62,12 @@ class EmailSender:
         for p in recommended:
             saving = round(p['unit_price'] - p['offer_price'], 2)
             saving_html = f"<span style='color:#e74c3c;'>Save Rs.{saving:.2f}</span>" if saving > 0 else ""
+            reason = p.get('reason', 'Recommended for you')
             product_rows += f"""
             <tr>
                 <td style="padding:10px;border-bottom:1px solid #eee;">
                     <strong>{p['product_name']}</strong><br>
-                    <small style="color:#888;">{p['category']}</small>
+                    <small style="color:#888;">{p['category']} • <em>{reason}</em></small>
                 </td>
                 <td style="padding:10px;border-bottom:1px solid #eee;text-align:center;">
                     <span style="text-decoration:line-through;color:#aaa;">Rs.{p['unit_price']:.2f}</span><br>
@@ -459,15 +460,42 @@ class EmailSender:
         results = []
 
         # Open ONE connection for all emails instead of one per email
+        server = None
         try:
             server = smtplib.SMTP(self.smtp_host, self.smtp_port)
             server.starttls()
             server.login(self.email_user, self.email_pass)
         except Exception as e:
+            for offer in offers:
+                if not offer.get('email_enabled') or not offer.get('promo_allowed'):
+                    skipped += 1
+                    results.append({
+                        'name':   offer['customer_name'],
+                        'email':  offer['email'],
+                        'status': 'skipped',
+                        'reason': 'Email notifications disabled'
+                    })
+                    continue
+
+                subject = f"🎉 {offer['offer_text']} — Sunrise Super"
+                html_content = self.build_email_html(offer)
+                self.log_email(
+                    offer['customer_id'], 'promotional',
+                    subject, html_content, False,
+                    segment=offer.get('segment')
+                )
+                failed += 1
+                results.append({
+                    'name':   offer['customer_name'],
+                    'email':  offer['email'],
+                    'status': 'failed',
+                    'reason': str(e)
+                })
             return {
-                'sent': 0, 'skipped': 0, 'failed': len(offers),
-                'results': [{'name': 'All', 'email': '-',
-                             'status': 'failed', 'reason': str(e)}]
+                'sent':    0,
+                'skipped': skipped,
+                'failed':  failed,
+                'results': results,
             }
 
         for offer in offers:
@@ -519,7 +547,8 @@ class EmailSender:
                     'reason': str(e)
                 })
 
-        server.quit()
+        if server is not None:
+            server.quit()
 
         return {
             'sent':    sent,
