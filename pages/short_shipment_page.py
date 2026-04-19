@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import os
 import smtplib
+import plotly.graph_objects as go
 from email.mime.text import MIMEText
 
 # =========================================================
@@ -549,9 +550,8 @@ def render_short_shipment():
     ensure_sample_data()
     
     # Navigation Tabs
-    tab1, tab2 = st.tabs(["📊 Dashboard", "📦 Record Delivery"])
-    
-    # =========================================================
+    tab1, tab2,tab3 = st.tabs(["📊 Dashboard", "📦 Record Delivery","📈  Discrepancy Trend Analyzer" ])   
+     # =========================================================
     # TAB 1: DASHBOARD & ORDER RECONCILIATION
     # =========================================================
     with tab1:
@@ -598,34 +598,60 @@ def render_short_shipment():
             show_only = st.selectbox("🔍 Filter Adjustments", ["All Adjustments", "Only Shortages", "Only Credits", "No Adjustment Needed"], key="rec_show_filter")
             adjustments_df = calculate_next_order_adjustment(rec_df)
             
-            if adjustments_df is not None and not adjustments_df.empty:
-                if show_only == "Only Shortages":
-                    adjustments_df = adjustments_df[adjustments_df['cumulative_shortage'] > 0]
-                elif show_only == "Only Credits":
-                    adjustments_df = adjustments_df[adjustments_df['cumulative_overage'] > 0]
-                elif show_only == "No Adjustment Needed":
-                    adjustments_df = adjustments_df[adjustments_df['adjustment_qty'] == 0]
-                
-                if adjustments_df.empty:
+            if adjustments_df.empty:
                     st.info(f"📭 No {show_only.lower()} found")
-                else:
+            else:
                     st.markdown("### 📋 Recommended Adjustments for Next Order")
-                    product_summary = rec_df.groupby(['supplier', 'product']).agg({'ordered': 'sum', 'received': 'sum', 'discrepancy_qty': 'sum', 'financial_impact': 'sum'}).reset_index()
-                    enhanced_df = adjustments_df.merge(product_summary[['supplier', 'product', 'ordered', 'received', 'discrepancy_qty']], on=['supplier', 'product'], how='left')
-                    display_df = enhanced_df[['supplier', 'product', 'ordered', 'received', 'discrepancy_qty', 'adjustment_type', 'adjustment_qty', 'reason']].copy()
-                    display_df.columns = ['Supplier', 'Product', 'Ordered Qty', 'Received Qty', 'Variance', 'Adjustment Type', 'Adjustment Qty', 'Reason']
+                    
+                    # Create product summary from rec_df (original data)
+                    product_summary = rec_df.groupby(['supplier', 'product']).agg({
+                        'ordered': 'sum', 
+                        'received': 'sum', 
+                        'discrepancy_qty': 'sum', 
+                        'financial_impact': 'sum'
+                    }).reset_index()
+                    
+                    # Merge adjustments with product summary
+                    enhanced_df = adjustments_df.merge(
+                        product_summary[['supplier', 'product', 'ordered', 'received', 'discrepancy_qty']], 
+                        on=['supplier', 'product'], 
+                        how='left'
+                    )
+                    
+                    # Create display dataframe
+                    display_df = enhanced_df[[
+                        'supplier', 'product', 'ordered', 'received', 
+                        'discrepancy_qty', 'adjustment_type', 'adjustment_qty', 'reason'
+                    ]].copy()
+                    
+                    display_df.columns = [
+                        'Supplier', 'Product', 'Ordered Qty', 'Received Qty', 
+                        'Variance', 'Adjustment Type', 'Adjustment Qty', 'Reason'
+                    ]
+                    
+                    # Format numbers
                     display_df['Ordered Qty'] = display_df['Ordered Qty'].apply(lambda x: f"{x:,.0f}")
                     display_df['Received Qty'] = display_df['Received Qty'].apply(lambda x: f"{x:,.0f}")
                     display_df['Variance'] = display_df['Variance'].apply(lambda x: f"{x:+,.0f}")
                     display_df['Adjustment Qty'] = display_df['Adjustment Qty'].apply(lambda x: f"{x:,.0f}")
-                    # Check if view_df exists and has data
-                    if 'view_df' in locals() and view_df is not None and not view_df.empty:
-                        st.dataframe(view_df, use_container_width=True, hide_index=True)
-                    else:
-                      st.info("No delivery data found for the selected period.")
-                    csv = enhanced_df[['supplier', 'product', 'ordered', 'received', 'discrepancy_qty', 'adjustment_type', 'adjustment_qty', 'reason']].to_csv(index=False)
-                    st.download_button(label="📥 Download Adjustments as CSV", data=csv, file_name=f"adjustments_{date.today()}.csv", mime="text/csv", key="download_adjustments")
-
+                    
+                    # Display the dataframe
+                    st.dataframe(display_df, use_container_width=True, hide_index=True)
+                    
+                                        # Download button
+                    csv_data = enhanced_df[[
+                        'supplier', 'product', 'ordered', 'received', 
+                        'discrepancy_qty', 'adjustment_type', 'adjustment_qty', 'reason'
+                    ]].to_csv(index=False)
+                    
+                    st.download_button(
+                        label="📥 Download Adjustments as CSV", 
+                        data=csv_data, 
+                        file_name=f"adjustments_{date.today()}.csv", 
+                        mime="text/csv", 
+                        key="download_adjustments"
+                    )
+              
     # =========================================================
     # TAB 2: RECORD DELIVERY WITH AUTO-FILL & EMAIL ALERTS
     # =========================================================
@@ -873,6 +899,88 @@ def render_short_shipment():
             view_df = drafts_df.copy()
             view_df.columns = ["Draft ID", "Saved At", "Order/Invoice", "Supplier", "Product", "Ordered Qty", "Received Qty", "Variance Qty", "Variance %", "Delivery Date", "Source"]
             st.dataframe(view_df, use_container_width=True, hide_index=True)
+
+           # =========================================================
+    # TAB 3: SUPPLIER BREAKDOWN
+    # =========================================================
+    with tab3:
+        st.markdown("### 🏭 Supplier Breakdown")
         
-        st.markdown("---")
-        st.markdown('<div class="footer">Sunrise Supermarket · Short-Shipment Detection System · Real-time Discrepancy Tracking</div>', unsafe_allow_html=True)
+        if len(rec_df) >= 5:
+            
+            # Calculate supplier performance
+            supplier_trend = rec_df.groupby('supplier').agg(
+                Shortage_Rate=('status', lambda x: (x == 'Short').mean() * 100),
+                Deliveries=('ordered', 'count')
+            ).reset_index()
+            supplier_trend = supplier_trend.sort_values('Shortage_Rate', ascending=False)
+            
+            # Display in one line per supplier
+            for _, row in supplier_trend.iterrows():
+                rate = row['Shortage_Rate']
+                if rate > 30:
+                    color = "🔴"
+                    status = "High Risk"
+                elif rate > 15:
+                    color = "🟡"
+                    status = "Medium Risk"
+                else:
+                    color = "🟢"
+                    status = "Low Risk"
+                
+                st.write(f"{color} **{row['supplier']}** - {rate:.0f}% shortage rate ({status}) | 📦 {row['Deliveries']:.0f} deliveries")
+            
+            st.markdown("---")
+            
+            # =========================================================
+            # TOP PROBLEM PRODUCT
+            # =========================================================
+            problem_products = rec_df[rec_df['status'] == 'Short'].groupby('product').size().sort_values(ascending=False)
+            if not problem_products.empty:
+                top_product = problem_products.index[0]
+                top_count = problem_products.values[0]
+                st.write(f"📦 **Most Problematic Product:** {top_product} ({top_count} shortage{'s' if top_count > 1 else ''})")
+                st.caption("⚠️ This product has the highest number of shortages")
+            else:
+                st.success("✅ No problematic products detected")
+            
+            st.markdown("---")
+            
+            # =========================================================
+            # SAVINGS OPPORTUNITY
+            # =========================================================
+            total_loss = abs(rec_df[rec_df['financial_impact'] < 0]['financial_impact'].sum())
+            if total_loss > 0:
+                st.write(f"💰 **Total Financial Loss:** LKR {total_loss:,.0f}")
+                st.caption("💡 Fixing high-risk suppliers can recover this amount")
+            else:
+                st.write("💰 **Total Financial Loss:** LKR 0")
+                st.caption("✅ No financial loss from shortages")
+            
+            st.markdown("---")
+            
+            # =========================================================
+            # RECOMMENDATION
+            # =========================================================
+            high_risk_count = len(supplier_trend[supplier_trend['Shortage_Rate'] > 30])
+            medium_risk_count = len(supplier_trend[(supplier_trend['Shortage_Rate'] > 15) & (supplier_trend['Shortage_Rate'] <= 30)])
+            
+            if high_risk_count > 0:
+                high_risk_names = supplier_trend[supplier_trend['Shortage_Rate'] > 30]['supplier'].tolist()
+                st.warning(f"🎯 **Immediate Action Required:** {high_risk_count} high-risk supplier(s) - {', '.join(high_risk_names)}")
+                st.caption("✅ Recommendation: Review contracts or add 25% safety stock")
+            elif medium_risk_count > 0:
+                st.info(f"📋 **Monitor Closely:** {medium_risk_count} supplier(s) need attention")
+                st.caption("✅ Recommendation: Track next 3 deliveries before deciding")
+            else:
+                st.success("✅ **All Good!** No high-risk suppliers detected")
+                st.caption("✅ Recommendation: Continue current monitoring process")
+        
+        else:
+            needed = 5 - len(rec_df)
+            st.info(f"📊 Need {needed} more deliveries for analysis")
+            st.progress(min(len(rec_df) / 5, 1.0))
+    
+    # Footer
+    st.markdown("---")
+    st.markdown('<div class="footer">Sunrise Supermarket SLIIT</div>', unsafe_allow_html=True)
