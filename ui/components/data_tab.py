@@ -347,8 +347,8 @@ def _render_manual_override(forecast_df: pd.DataFrame, product: dict) -> None:
 
 # ── Override history ───────────────────────────────────────────────────────────
 
-    def _render_override_history(product: dict) -> None:
-     """Show all past manual overrides for this product from the DB."""
+def _render_override_history(product: dict) -> None:
+    """Show all past manual overrides for this product from the DB."""
     st.markdown('<div class="section-title">🔁 Override History</div>', unsafe_allow_html=True)
 
     overrides = fetch_overrides(product.get("product_code", ""))
