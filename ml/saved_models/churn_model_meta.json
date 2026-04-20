@@ -1,0 +1,10 @@
+{
+  "trained_at": "2026-04-07T00:37:42",
+  "training_rows": 110,
+  "churn_ratio": 0.2,
+  "features": [
+    "total_spent",
+    "days_inactive"
+  ],
+  "model_type": "RandomForestClassifier"
+}

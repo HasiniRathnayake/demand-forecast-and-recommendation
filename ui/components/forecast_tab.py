@@ -14,7 +14,7 @@ import streamlit as st
 
 from services.weather_service import get_kandy_weather
 from services.forecast_service import get_active_model_version
-from data.forecast_repository import fetch_overrides
+from data.forecast_repository import fetch_overrides, fetch_past_forecasts
 
 
 def render_forecast_tab(
@@ -32,6 +32,9 @@ def render_forecast_tab(
     overrides = fetch_overrides(product.get("product_code", ""))
     override_map = {ov["forecast_date"]: ov for ov in overrides}
 
+    # Fetch past AI predictions (dates before today) to show on chart
+    past_forecasts = fetch_past_forecasts(product.get("product_code", ""), days_back=14)
+
     # ── Top badges row ─────────────────────────────────────────────────────────
     badge_row = f'<span class="badge badge-model">🧠 Model: {model_version}</span> '
     if weather.get("available"):
@@ -48,7 +51,7 @@ def render_forecast_tab(
         return
 
     # ── Main chart ─────────────────────────────────────────────────────────────
-    fig = _build_forecast_chart(hist_df, forecast_df, show_confidence, override_map)
+    fig = _build_forecast_chart(hist_df, forecast_df, show_confidence, override_map, past_forecasts)
     st.plotly_chart(fig, use_container_width=True, config={"displaylogo": False})
 
     # ── Impact factor bar ──────────────────────────────────────────────────────
@@ -75,6 +78,7 @@ def _build_forecast_chart(
     forecast_df: pd.DataFrame,
     show_confidence: bool,
     override_map: dict | None = None,
+    past_forecasts: list | None = None,
 ) -> go.Figure:
     fig = go.Figure()
 
@@ -92,6 +96,25 @@ def _build_forecast_chart(
                 hovertemplate="<b>%{x|%d %b}</b><br>Actual: %{y:.0f} units<extra></extra>",
             )
         )
+
+    # Past AI predictions (dates before today stored in DB)
+    if past_forecasts:
+        import pandas as _pd
+        pf_df = _pd.DataFrame(past_forecasts)
+        if not pf_df.empty:
+            pf_df["forecast_date"] = _pd.to_datetime(pf_df["forecast_date"])
+            pf_df = pf_df.sort_values("forecast_date")
+            fig.add_trace(
+                go.Scatter(
+                    x=pf_df["forecast_date"],
+                    y=pf_df["predicted_demand"],
+                    mode="lines+markers",
+                    name="Past AI Predictions",
+                    line=dict(color="#8B5CF6", width=2, dash="dot"),
+                    marker=dict(size=5, color="#8B5CF6"),
+                    hovertemplate="<b>%{x|%d %b}</b><br>Past Prediction: %{y:.0f} units<extra></extra>",
+                )
+            )
 
     # Confidence band
     if show_confidence and not forecast_df.empty:
@@ -183,7 +206,7 @@ def _build_forecast_chart(
             # Override values as bold stars — one trace per override point
             # so each star renders independently with its own hover text
             for ov_d, ov_v, ov_r in zip(ov_dates, ov_vals, ov_reasons):
-                fig.add_trace(
+                fig.add_trace(go.Scatter(
                     x=[ov_d],
                     y=[ov_v],
                     mode="markers+text",
@@ -203,15 +226,21 @@ def _build_forecast_chart(
                         f"Reason: {ov_r or 'Manual override'}"
                         "<extra>Manual Override</extra>"
                     ),
-                )
+                ))
             # Add one invisible trace just for the legend entry
             fig.add_trace(go.Scatter(
-                x=[None], y=[None],
+                x=[None],
+                y=[None],
                 mode="markers",
                 name="Manual Override",
-                marker=dict(size=14, color="#7C3AED", symbol="star",
-                            line=dict(color="white", width=1.5)),
+                marker=dict(
+                    size=14,
+                    color="#7C3AED",
+                    symbol="star",
+                    line=dict(color="white", width=1.5)
+                ),
                 showlegend=True,
+                hoverinfo="skip",
             ))
 
     return fig

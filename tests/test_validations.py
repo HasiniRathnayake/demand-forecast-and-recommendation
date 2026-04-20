@@ -27,17 +27,17 @@ class TestFetchProductSalesValidation:
 
     def test_days_zero_raises(self):
         from data.forecast_repository import fetch_product_sales
-        with pytest.raises(ValueError, match="between 1 and 365"):
+        with pytest.raises(ValueError, match="between 1 and 730"):
             fetch_product_sales("PROD001", days=0)
 
     def test_days_negative_raises(self):
         from data.forecast_repository import fetch_product_sales
-        with pytest.raises(ValueError, match="between 1 and 365"):
+        with pytest.raises(ValueError, match="between 1 and 730"):
             fetch_product_sales("PROD001", days=-10)
 
     def test_days_too_large_raises(self):
         from data.forecast_repository import fetch_product_sales
-        with pytest.raises(ValueError, match="between 1 and 365"):
+        with pytest.raises(ValueError, match="between 1 and 730"):
             fetch_product_sales("PROD001", days=999)
 
     def test_valid_inputs_pass(self):
