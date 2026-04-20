@@ -24,6 +24,10 @@ if not is_authenticated():
 
 # ── Route: main hub ───────────────────────────────────────────────────────────
 elif page == "main_dashboard":
+    from services.auth_service import get_user_role
+    if get_user_role() == "supplier":
+        st.session_state.current_page = "supplier_dashboard"
+        st.rerun()
     from pages.main_dashboard import render_main_dashboard
     render_main_dashboard()
 
@@ -167,9 +171,15 @@ elif page == "supplier_dashboard":
         st.session_state.current_page = "main_dashboard"
         st.rerun()
 
-    if st.button("← Back", key="back_supplier"):
-        st.session_state.current_page = "main_dashboard"
-        st.rerun()
+    col1, col2 = st.columns([8, 1])
+    with col2:
+        if st.button("Logout", key="logout_supplier"):
+            logout()
+    
+    if user.get('role') == 'admin':
+        if st.button("← Back to Hub", key="back_supplier"):
+            st.session_state.current_page = "main_dashboard"
+            st.rerun()
 
     from pages.supplier_dashboard import render_supplier_dashboard
     render_supplier_dashboard()
