@@ -3,10 +3,12 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.db_connection import DatabaseConnection
+from scripts.apriori_engine import AprioriEngine
 
 class OffersEngine:
     def __init__(self):
         self.db = DatabaseConnection()
+        self.apriori = AprioriEngine()
 
     def get_top_products(self, limit=5):
         """Get best selling products from product_catalog"""
@@ -57,47 +59,79 @@ class OffersEngine:
         return [row[0] for row in rows]
 
     def generate_offer_for_customer(self, customer):
-        """Generate a personalized offer based on segment"""
+        """Generate a personalized offer based on segment using hybrid recommendations"""
         segment    = customer['segment']
         customer_id = customer['customer_id']
         name       = customer['first_name']
 
-        # Get their favourite categories
-        fav_categories = self.get_customer_favourite_categories(customer_id)
-
-        # Get recommended products from their fav category if possible
-        if fav_categories:
-            query = """
-            SELECT product_code, product_name, category,
-                   unit_price,
-                   COALESCE(offer_price, unit_price) as offer_price
-            FROM product_catalog
-            WHERE category = %s AND is_ai_supported = TRUE
-            ORDER BY unit_price DESC
-            LIMIT 3
-            """
-            rows = self.db.fetch_all(query, [fav_categories[0]])
-        else:
-            rows = []
-
-        # Fall back to top products if no purchase history
-        if not rows:
-            top = self.get_top_products(3)
-            rows = [(p['product_code'], p['product_name'], p['category'],
-                     p['unit_price'], p['offer_price']) for p in top]
-
         recommended = []
-        for row in rows:
-            unit  = float(row[3])
-            offer = float(row[4])
-            recommended.append({
-                'product_code': row[0],
-                'product_name': row[1],
-                'category':     row[2],
-                'unit_price':   unit,
-                'offer_price':  offer,
-                'saving':       round(unit - offer, 2)
-            })
+        fav_categories = []
+
+        # Try apriori recommendations first (market basket analysis - strongest signal)
+        apriori_recs = self.apriori.get_recommendations(customer_id, top_n=4)
+        if apriori_recs:
+            for rec in apriori_recs:
+                recommended.append({
+                    'product_code': rec['product_code'],
+                    'product_name': rec['product_name'],
+                    'category':     rec['category'],
+                    'unit_price':   rec['unit_price'],
+                    'offer_price':  rec['offer_price'],
+                    'saving':       round(rec['unit_price'] - rec['offer_price'], 2),
+                    'reason':       rec.get('reason', 'Recommended for you')
+                })
+
+        # Complement with favorite category products (best-sellers, not highest price)
+        if len(recommended) < 3:
+            fav_categories = self.get_customer_favourite_categories(customer_id)
+            if fav_categories:
+                query = """
+                SELECT product_code, product_name, category,
+                       unit_price,
+                       COALESCE(offer_price, unit_price) as offer_price,
+                       COALESCE(SUM(ti.quantity), 0) as total_sold
+                FROM product_catalog p
+                LEFT JOIN transaction_items ti ON p.product_code = ti.product_code
+                WHERE p.category = %s AND p.is_ai_supported = TRUE
+                GROUP BY p.product_code, p.product_name, p.category, p.unit_price, p.offer_price
+                ORDER BY total_sold DESC, p.product_name ASC
+                LIMIT %s
+                """
+                needed = 3 - len(recommended)
+                rows = self.db.fetch_all(query, [fav_categories[0], needed])
+
+                for row in rows:
+                    # Check if already in recommended (avoid duplicates)
+                    if not any(r['product_code'] == row[0] for r in recommended):
+                        unit  = float(row[3])
+                        offer = float(row[4])
+                        recommended.append({
+                            'product_code': row[0],
+                            'product_name': row[1],
+                            'category':     row[2],
+                            'unit_price':   unit,
+                            'offer_price':  offer,
+                            'saving':       round(unit - offer, 2),
+                            'reason':       'Your favorite category'
+                        })
+
+        # Fall back to top products if still need more
+        if len(recommended) < 3:
+            top = self.get_top_products(3 - len(recommended))
+            for p in top:
+                if not any(r['product_code'] == p['product_code'] for r in recommended):
+                    recommended.append({
+                        'product_code': p['product_code'],
+                        'product_name': p['product_name'],
+                        'category':     p['category'],
+                        'unit_price':   p['unit_price'],
+                        'offer_price':  p['offer_price'],
+                        'saving':       round(p['unit_price'] - p['offer_price'], 2),
+                        'reason':       'Popular product'
+                    })
+
+        # Limit to 3 products for email
+        recommended = recommended[:3]
 
         # Discount % based on segment
         segment_discounts = {

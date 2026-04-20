@@ -1,7 +1,9 @@
 # pages/loyalty_campaigns.py
 import streamlit as st
 import sys, os
+import re
 import streamlit.components.v1 as components
+import plotly.express as px
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.db_connection import DatabaseConnection
 from scripts.offers_engine import OffersEngine
@@ -67,16 +69,108 @@ FRIENDLY_SEGMENT = {
     'Churned':          'Valued Member',
 }
 
+PREFERENCE_MESSAGE_SNIPPETS = {
+    '🐟 Fresh & Protein Lovers': (
+        "Because you often choose fresh proteins, we selected strong value deals on seafood,"
+        " dairy, and daily essentials for your next basket."
+    ),
+    '🥦 Balanced Shoppers': (
+        "Your balanced shopping style inspired this mix of healthy staples, household must-haves,"
+        " and weekly-value picks."
+    ),
+    '👶 Family & Baby Care': (
+        "We focused this campaign on family-friendly bundles and baby-care essentials to help"
+        " you save more on routine purchases."
+    ),
+    '🥤 Drink & Health Focused': (
+        "Since you prefer drinks and wellness products, we highlighted offers on beverages,"
+        " nutrition, and health-focused categories."
+    ),
+}
+
+CANONICAL_TASTE_LABELS = {
+    "balanced shoppers": "🥦 Balanced Shoppers",
+    "fresh & protein lovers": "🐟 Fresh & Protein Lovers",
+    "family & baby care": "👶 Family & Baby Care",
+    "drink & health focused": "🥤 Drink & Health Focused",
+}
+
+
+def _normalize_taste_label(raw_value: str | None) -> str:
+    text = re.sub(r"\s+", " ", (raw_value or "").strip())
+    if not text:
+        return "Unknown"
+
+    # Remove leading emoji/symbols then normalize matching by lowercase text.
+    text_no_emoji = re.sub(r"^[^\w]+\s*", "", text)
+    key = text_no_emoji.lower()
+    return CANONICAL_TASTE_LABELS.get(key, text)
+
+
+def _compose_campaign_message(base_message, taste_preference, personalize):
+    text = (base_message or '').strip()
+    if not personalize:
+        return text
+
+    snippet = PREFERENCE_MESSAGE_SNIPPETS.get((taste_preference or '').strip())
+    if not snippet:
+        return text
+    return f"{text}\n\n{snippet}" if text else snippet
+
+
+def _assignment_segment_column():
+    db = DatabaseConnection()
+    cols = db.fetch_all(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'customer_segment_assignment'
+        """
+    )
+    names = {c[0] for c in cols}
+    if 'segment_id' in names:
+        return 'segment_id'
+    if 'segment' in names:
+        return 'segment'
+    return 'segment_id'
+
+
+def _segment_join_condition(segment_col: str, csa_alias: str = "csa", cs_alias: str = "cs") -> str:
+    """Return a join predicate that supports both id-based and name-based assignments."""
+    return (
+        f"({csa_alias}.{segment_col}::text = {cs_alias}.segment_id::text "
+        f"OR LOWER(TRIM({csa_alias}.{segment_col}::text)) = LOWER(TRIM({cs_alias}.segment_name::text)))"
+    )
+
+
+def _assignment_taste_column():
+    db = DatabaseConnection()
+    cols = db.fetch_all(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'customer_segment_assignment'
+        """
+    )
+    names = {c[0] for c in cols}
+    if 'product_preference' in names:
+        return 'product_preference'
+    if 'segment_name' in names:
+        return 'segment_name'
+    return None
+
 
 # ── Cached DB calls — only hit database once per 5 minutes ───────────────────
 @st.cache_data(ttl=300, show_spinner=False)
 def _load_segments():
     db = DatabaseConnection()
-    return db.fetch_all("""
+    segment_col = _assignment_segment_column()
+    join_condition = _segment_join_condition(segment_col, "csa", "cs")
+    return db.fetch_all(f"""
         SELECT cs.segment_name, COUNT(csa.customer_id) as count
         FROM customer_segments cs
         LEFT JOIN customer_segment_assignment csa
-               ON cs.segment_id = csa.segment_id
+               ON {join_condition}
         GROUP BY cs.segment_name
         HAVING COUNT(csa.customer_id) > 0
         ORDER BY count DESC
@@ -84,25 +178,132 @@ def _load_segments():
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _load_eligible(selected_segs_tuple):
+def _load_taste_preferences(selected_segs_tuple):
     db = DatabaseConnection()
-    placeholders = ','.join(['%s'] * len(selected_segs_tuple))
-    return db.fetch_all(f"""
+    segment_col = _assignment_segment_column()
+    join_condition = _segment_join_condition(segment_col, "csa", "cs")
+    taste_col = _assignment_taste_column()
+
+    if not selected_segs_tuple or not taste_col:
+        return []
+
+    seg_placeholders = ','.join(['%s'] * len(selected_segs_tuple))
+    rows = db.fetch_all(f"""
+                SELECT COALESCE(NULLIF(REGEXP_REPLACE(TRIM(csa.{taste_col}::text), '\\s+', ' ', 'g'), ''), 'Unknown') AS taste_pref,
+               COUNT(DISTINCT c.customer_id) as customer_count
+        FROM customers c
+        JOIN customer_segment_assignment csa ON c.customer_id = csa.customer_id
+                JOIN customer_segments cs ON {join_condition}
+        WHERE c.is_active = TRUE
+          AND cs.segment_name IN ({seg_placeholders})
+          AND csa.{taste_col} IS NOT NULL
+          AND TRIM(csa.{taste_col}::text) <> ''
+                GROUP BY taste_pref
+        ORDER BY customer_count DESC, taste_pref
+    """, list(selected_segs_tuple))
+
+    deduped_counts = {}
+    for taste_pref, customer_count in rows:
+        canonical = _normalize_taste_label(taste_pref)
+        deduped_counts[canonical] = deduped_counts.get(canonical, 0) + int(customer_count or 0)
+
+    return sorted(deduped_counts.items(), key=lambda x: (-x[1], x[0]))
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_segment_taste_matrix(selected_segs_tuple):
+    db = DatabaseConnection()
+    segment_col = _assignment_segment_column()
+    join_condition = _segment_join_condition(segment_col, "csa", "cs")
+    taste_col = _assignment_taste_column()
+
+    if not selected_segs_tuple:
+        return pd.DataFrame(columns=["segment_name", "taste_preference", "customer_count"])
+
+    seg_placeholders = ','.join(['%s'] * len(selected_segs_tuple))
+
+    if taste_col:
+        taste_expr = f"COALESCE(NULLIF(REGEXP_REPLACE(TRIM(csa.{taste_col}::text), '\\s+', ' ', 'g'), ''), 'Unknown')"
+    else:
+        taste_expr = "'Unknown'"
+
+    rows = db.fetch_all(f"""
+        SELECT
+            cs.segment_name,
+            {taste_expr} AS taste_preference,
+            COUNT(DISTINCT c.customer_id) AS customer_count
+        FROM customers c
+        JOIN customer_segment_assignment csa ON c.customer_id = csa.customer_id
+                JOIN customer_segments cs ON {join_condition}
+        WHERE c.is_active = TRUE
+          AND cs.segment_name IN ({seg_placeholders})
+        GROUP BY cs.segment_name, taste_preference
+        ORDER BY cs.segment_name, customer_count DESC
+    """, list(selected_segs_tuple))
+
+    matrix_df = pd.DataFrame(rows, columns=["segment_name", "taste_preference", "customer_count"])
+    if matrix_df.empty:
+        return matrix_df
+
+    matrix_df["taste_preference"] = matrix_df["taste_preference"].apply(_normalize_taste_label)
+    matrix_df = (
+        matrix_df.groupby(["segment_name", "taste_preference"], as_index=False)["customer_count"]
+        .sum()
+    )
+    return matrix_df
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _load_eligible(selected_segs_tuple, selected_tastes_tuple):
+    db = DatabaseConnection()
+    segment_col = _assignment_segment_column()
+    join_condition = _segment_join_condition(segment_col, "csa", "cs")
+    taste_col = _assignment_taste_column()
+
+    seg_placeholders = ','.join(['%s'] * len(selected_segs_tuple))
+
+    if taste_col:
+        taste_expr = f"COALESCE(NULLIF(REGEXP_REPLACE(TRIM(csa.{taste_col}::text), '\\s+', ' ', 'g'), ''), 'Unknown')"
+        taste_select = f"{taste_expr} as taste_preference"
+        taste_group = ""
+    else:
+        taste_expr = "'Unknown'"
+        taste_select = "'Unknown' as taste_preference"
+        taste_group = ""
+
+    where_clause = [f"cs.segment_name IN ({seg_placeholders})", "c.is_active = TRUE"]
+    params = list(selected_segs_tuple)
+
+    rows = db.fetch_all(f"""
         SELECT c.customer_id, c.first_name, c.email,
                cs.segment_name,
                c.email_notification_enabled,
                c.promotional_emails_allowed,
-               COALESCE(SUM(t.total_amount), 0) as total_spent
+               COALESCE(SUM(t.total_amount), 0) as total_spent,
+               {taste_select}
         FROM customers c
         JOIN customer_segment_assignment csa ON c.customer_id = csa.customer_id
-        JOIN customer_segments cs ON csa.segment_id = cs.segment_id
+        JOIN customer_segments cs ON {join_condition}
         LEFT JOIN transactions t ON c.customer_id = t.customer_id
-        WHERE cs.segment_name IN ({placeholders}) AND c.is_active = TRUE
+        WHERE {' AND '.join(where_clause)}
         GROUP BY c.customer_id, c.first_name, c.email,
                  cs.segment_name, c.email_notification_enabled,
-                 c.promotional_emails_allowed
+                 c.promotional_emails_allowed, {taste_expr}
         ORDER BY total_spent DESC
-    """, list(selected_segs_tuple))
+    """, params)
+
+    normalized_rows = []
+    for row in rows:
+        mutable = list(row)
+        if len(mutable) > 7:
+            mutable[7] = _normalize_taste_label(mutable[7])
+        normalized_rows.append(tuple(mutable))
+
+    if selected_tastes_tuple:
+        selected_set = set(selected_tastes_tuple)
+        normalized_rows = [r for r in normalized_rows if len(r) > 7 and r[7] in selected_set]
+
+    return normalized_rows
 
 
 def _build_preview(tmpl, campaign_name, custom_message,
@@ -176,7 +377,7 @@ def show_promotions():
     # Load segments once (cached)
     seg_data = _load_segments()
     if not seg_data:
-        st.warning("No segments found. Go to Customer Segments and run analysis first.")
+        st.warning("No segments found. Go to Customer Segments and sync cluster segments first.")
         return
 
     seg_options = {row[0]: row[1] for row in seg_data}
@@ -266,8 +467,71 @@ def show_promotions():
             col_preview.info("Select a segment to see the preview.")
             return
 
+        matrix_df = _load_segment_taste_matrix(tuple(selected_segs))
+        if not matrix_df.empty:
+            st.markdown("##### Audience Opportunity Matrix")
+            st.caption("Rows: RFM segments · Columns: taste clusters · Cells: active customer count")
+
+            matrix = matrix_df.pivot_table(
+                index="segment_name",
+                columns="taste_preference",
+                values="customer_count",
+                aggfunc="sum",
+                fill_value=0,
+            )
+
+            row_order = [seg for seg in selected_segs if seg in matrix.index]
+            if row_order:
+                matrix = matrix.reindex(row_order)
+
+            col_order = matrix.sum(axis=0).sort_values(ascending=False).index.tolist()
+            matrix = matrix[col_order]
+
+            fig = px.imshow(
+                matrix,
+                text_auto=True,
+                aspect="auto",
+                color_continuous_scale="Blues",
+                labels={"x": "Taste Cluster", "y": "RFM Segment", "color": "Customers"},
+            )
+            fig.update_layout(
+                height=max(300, 140 + 40 * len(matrix.index)),
+                margin=dict(l=10, r=10, t=10, b=10),
+                coloraxis_colorbar=dict(title="Customers"),
+            )
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+            top_pair = matrix.stack().idxmax() if not matrix.empty else None
+            top_count = int(matrix.max().max()) if not matrix.empty else 0
+            if top_pair and top_count > 0:
+                top_segment, top_taste = top_pair
+                st.info(
+                    f"Biggest opportunity: {top_count} customers in '{top_segment}' × '{top_taste}'. "
+                    "Use this overlap to shape your campaign product and message."
+                )
+        else:
+            st.info("No segment-taste overlap data available yet for the selected segments.")
+
+        taste_pref_rows = _load_taste_preferences(tuple(selected_segs))
+        if taste_pref_rows:
+            taste_options = {row[0]: row[1] for row in taste_pref_rows}
+            selected_tastes = st.multiselect(
+                "Filter by Product Preference (Optional)",
+                options=list(taste_options.keys()),
+                format_func=lambda x: f"{x} ({taste_options[x]} customers)",
+                help="Use this to target taste clusters like Fresh & Protein Lovers."
+            )
+        else:
+            selected_tastes = []
+
+        personalize_by_preference = st.toggle(
+            "Personalize Email Message By Product Preference",
+            value=True,
+            help="Adds a tailored message paragraph based on each customer's taste profile."
+        )
+
         # Load eligible customers (cached)
-        eligible_rows  = _load_eligible(tuple(selected_segs))
+        eligible_rows  = _load_eligible(tuple(selected_segs), tuple(selected_tastes))
         total_selected = len(eligible_rows)
         email_eligible = sum(1 for r in eligible_rows if r[4] and r[5])
 
@@ -282,7 +546,7 @@ def show_promotions():
                 df_e = pd.DataFrame(
                     eligible_rows,
                     columns=['ID', 'Name', 'Email', 'Segment',
-                             'Email On', 'Promo OK', 'Spent']
+                             'Email On', 'Promo OK', 'Spent', 'Preference']
                 )
                 df_e['Email On'] = df_e['Email On'].apply(lambda x: '✅' if x else '❌')
                 df_e['Promo OK'] = df_e['Promo OK'].apply(lambda x: '✅' if x else '❌')
@@ -303,16 +567,23 @@ def show_promotions():
         if 'eligible_rows' in dir() and eligible_rows:
             sample_name = str(eligible_rows[0][1]) or "Valued Customer"
             raw_seg     = str(eligible_rows[0][3]) or "Member"
+            sample_pref = str(eligible_rows[0][7]) if len(eligible_rows[0]) > 7 else ""
         else:
             sample_name = "Valued Customer"
             raw_seg     = selected_segs[0] if selected_segs else "Member"
+            sample_pref = ""
 
         sample_seg = FRIENDLY_SEGMENT.get(raw_seg, 'Loyalty Member')
+        preview_message = _compose_campaign_message(
+            custom_message,
+            sample_pref,
+            personalize_by_preference
+        )
 
         preview = _build_preview(
             tmpl           = tmpl,
             campaign_name  = campaign_name,
-            custom_message = custom_message,
+            custom_message = preview_message,
             discount_pct   = discount_pct,
             promo_start    = promo_start,
             valid_until    = valid_until,
@@ -418,7 +689,7 @@ def show_promotions():
             if not selected_segs or len(selected_segs) == 0:
                 validation_errors.append("❌ Select at least one customer segment")
             if email_eligible == 0:
-                validation_errors.append("❌ No eligible customers in selected segments")
+                validation_errors.append("❌ No eligible customers for selected segment/preference filters")
             
             # Display validation errors
             if validation_errors:
@@ -445,6 +716,7 @@ def show_promotions():
                     'email_enabled': r[4],
                     'promo_allowed': r[5],
                     'total_spent':   float(r[6]),
+                    'taste_preference': r[7] if len(r) > 7 else None,
                     'tx_count':      1,
                     'avg_basket':    0,
                     'days_inactive': 0
@@ -452,12 +724,23 @@ def show_promotions():
 
                 engine = OffersEngine()
                 offers = engine.generate_all_offers(customers_list)
+                preference_by_customer = {
+                    c['customer_id']: c.get('taste_preference')
+                    for c in customers_list
+                }
 
                 for o in offers:
+                    taste_pref = preference_by_customer.get(o['customer_id'])
                     o['discount_pct'] = discount_pct
                     o['offer_text']   = f"{discount_pct}% OFF — {campaign_name}"
                     o['promo_start']  = promo_start.strftime('%d %b %Y')
                     o['promo_end']    = valid_until.strftime('%d %b %Y')
+                    o['taste_preference'] = taste_pref
+                    o['campaign_message'] = _compose_campaign_message(
+                        custom_message,
+                        taste_pref,
+                        personalize_by_preference
+                    )
 
                 if scheduled:
                     queue_summary = sender.queue_scheduled_emails(

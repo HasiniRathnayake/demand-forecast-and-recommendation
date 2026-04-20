@@ -103,6 +103,14 @@ from utils import validate_email, validate_phone, validate_supplier_id, validate
 def render_short_shipment():
     """Wrapper that renders short shipment module inside shared app"""
 
+    # Prefer the unified short-shipment page used by the main app route.
+    # Fallback to legacy implementation below only if import fails.
+    try:
+        from pages.short_shipment_page import render_short_shipment as render_unified_short_shipment
+        return render_unified_short_shipment()
+    except Exception:
+        pass
+
     from database import (
         get_db_connection, init_database,
         add_sample_data, get_suppliers_sqlite, get_products_sqlite
