@@ -88,9 +88,20 @@ def render_login_page() -> None:
                 if success:
                     st.session_state.authenticated = True
                     st.session_state.user = user
-                    st.session_state.current_page = "main_dashboard"
-                    st.success(message)
-                    st.rerun()
+                    
+                    if user.get("role") == "supplier":
+                        if not user.get("supplier_id"):
+                            st.session_state.authenticated = False
+                            st.session_state.user = None
+                            st.error("Supplier account is not linked to a supplier identifier (Missing sup_code). Please contact Admin.")
+                        else:
+                            st.session_state.current_page = "supplier_dashboard"
+                            st.success(message)
+                            st.rerun()
+                    else:
+                        st.session_state.current_page = "main_dashboard"
+                        st.success(message)
+                        st.rerun()
                 else:
                     st.markdown(
                         f'<div class="alert-info">{message}</div>',
