@@ -565,8 +565,21 @@ def render_short_shipment():
                     supplier_row = suppliers_df[suppliers_df['supplier_name'] == supplier]
                     supplier_id = supplier_row.iloc[0]['supplier_id'] if not supplier_row.empty else ''
                 
-                delivery_date = st.date_input("Delivery Date", value=date.today(), key="delivery_date")
-            
+                delivery_date = st.date_input(
+                    "Delivery Date *", 
+                    value=date.today(), 
+                    key="delivery_date",
+                    max_value=date.today(),
+                    help="The actual date the shipment was received. Can be today or any past date."
+                )
+
+                # Check if delivery is late (if you have expected date from PO)
+                if is_po_selected and 'expected_delivery_date' in st.session_state.selected_po_data:
+                    expected_date = st.session_state.selected_po_data.get('expected_delivery_date')
+                    if expected_date and delivery_date > expected_date:
+                        days_late = (delivery_date - expected_date).days
+                        st.warning(f"⚠️ This delivery is {days_late} day(s) late!")
+                            
             with col2:
                 st.markdown("#### 📦 Product Information")
                 
@@ -821,4 +834,4 @@ def render_short_shipment():
             st.progress(min(len(trend_df) / 5, 1.0))
             st.caption("Add more deliveries through the 'Record Delivery' tab to enable detailed analysis")
 
-    st.markdown
+    st.markdown('<div class="footer">Sunrise Supermarket SLIIT</div>', unsafe_allow_html=True)

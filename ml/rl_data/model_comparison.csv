@@ -1,0 +1,5 @@
+Model,MAE,RMSE,R2,MAPE %,Avg Reward,Perfect %
+Random Forest (original),1.863,3.6,0.9914,3.04,5.42,83.6
+Random Forest (RL v2),1.06,2.53,0.9958,1.82,7.67,91.7
+XGBoost (original),1.136,1.849,0.9977,1.88,8.76,94.9
+XGBoost (RL v2),0.717,1.268,0.9989,1.23,9.66,98.5

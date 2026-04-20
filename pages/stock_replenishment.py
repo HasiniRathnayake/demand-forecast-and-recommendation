@@ -3,6 +3,8 @@ import requests
 import pandas as pd
 import math
 import re
+import joblib 
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 from config.settings import SUPABASE_URL, SUPABASE_KEY
@@ -17,6 +19,7 @@ from pages.stock_replenishment_helpers import (
     fetch_orders,
     fetch_product_supplier_map,
     fetch_supplier_product_map,
+    fetch_supplier_quantities_per_product,
     fetch_products,
     fetch_purchase_orders,
     fetch_replenishment_status,
@@ -35,6 +38,47 @@ HEADERS = {
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json",
 }
+
+@st.cache_resource
+def load_ai_supplier_model():
+    try:
+        return joblib.load('supplier_rf_model.pkl')
+    except Exception:
+        return None
+
+ai_model = load_ai_supplier_model()
+
+SUPPLIER_METRICS_CSV = Path(__file__).resolve().parents[1] / "supplier_data_engineered.csv"
+
+@st.cache_data(show_spinner=False)
+def load_supplier_metrics(csv_path: Path | str = SUPPLIER_METRICS_CSV) -> pd.DataFrame:
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception:
+        return pd.DataFrame()
+
+    if df.empty:
+        return df
+
+    df["on_time_days"] = pd.to_numeric(df["on_time_days"], errors="coerce").fillna(0)
+    df["is_late"] = df["on_time_days"] > 0
+    df["abs_discrepancy_pct"] = df["discrepancy_pct"].abs()
+
+    summary = df.groupby(["supplier_id", "supplier_name"], as_index=False).agg(
+        delivery_count=("po_id", "count"),
+        total_ordered_qty=("ordered_qty", "sum"),
+        late_count=("is_late", "sum"),
+        late_rate=("is_late", "mean"),
+        avg_discrepancy_pct=("abs_discrepancy_pct", "mean"),
+        supplier_risk_score=("supplier_risk_score", "mean"),
+        supplier_good_rate=("supplier_good_rate", "mean"),
+    )
+
+    summary["late_rate"] = summary["late_rate"].fillna(0)
+    summary["supplier_risk_score"] = summary["supplier_risk_score"].fillna(0)
+    summary["supplier_good_rate"] = summary["supplier_good_rate"].fillna(0)
+    summary = summary.set_index("supplier_name")
+    return summary
 
 # --- UI Renderer ---
 def render_stock_replenishment():
@@ -64,17 +108,28 @@ def render_stock_replenishment():
         suppliers = fetch_suppliers()
         pos = fetch_purchase_orders()
         forecast_dates = fetch_forecast_dates()
+        supplier_quantities = fetch_supplier_quantities_per_product()
+        supplier_metrics = load_supplier_metrics()
         default_supplier_id = suppliers[0]['supplier_id'] if suppliers else None
 
     if not forecast_dates:
         st.warning("No demand forecasts found. Generate forecasts before using Stock Replenishment.")
         return
 
+    # Get today's date for validation
+    today = datetime.now().date()
+
     selected_forecast_date = st.date_input(
         "Forecast Date",
         value=pd.to_datetime(forecast_dates[0]).date(),
-        help="Stock replenishment suggestions are computed from demand_forecasts for the selected date.",
+        min_value=today,  # This restricts selection to today and future dates
+        help="Stock replenishment suggestions are computed from demand_forecasts for the selected date. Only present and future dates allowed.",
     )
+
+    # Optional: Additional validation
+    if selected_forecast_date < today:
+        st.error("❌ Cannot select past dates. Please select today or a future date.")
+        st.stop()
 
     with st.expander("📣 Promotion Uplift Planner", expanded=False):
         st.caption("Use this when live POS is delayed. It increases forecast demand using expected campaign response.")
@@ -85,9 +140,6 @@ def render_stock_replenishment():
         safety_buffer_pct = st.slider("Safety buffer %", min_value=0, max_value=60, value=15, step=5)
 
     promo_multiplier = (promo_buy_probability * promo_reach_ratio) if enable_promo_uplift else 0.0
-
-    # No longer needed since we're reading directly from demand_forecasts
-    # forecast_map = fetch_forecasts_for_date(...)
 
     # Inline fallback panel for older Streamlit versions without st.dialog.
     pending_override = st.session_state.get("pending_override")
@@ -126,11 +178,10 @@ def render_stock_replenishment():
                 )
 
     # Main Tabs
-    tab_dash, tab_po, tab_sup, tab_shrink = st.tabs([
+    tab_dash, tab_po, tab_sup = st.tabs([
         "📊 ML Dashboard & Approvals",
         "📦 Purchase Orders (Auto-POs)",
         "🏢 Supplier Directory",
-        "📉 Shrinkage Analysis",
     ])
 
     # ─────────────────────────────────────────────────────────────────
@@ -253,7 +304,18 @@ def render_stock_replenishment():
             sup_id_to_name = {s['supplier_id']: s['supplier_name'] for s in suppliers}
             supplier_product_map = fetch_supplier_product_map()
             product_to_supplier_ids = {}
+            
             for sid, p_codes in supplier_product_map.items():
+                # --- 🛡️ SAFETY CHECK FOR EMPTY DATA ---
+                # Skip any empty values (like NaN floats)
+                if not isinstance(p_codes, (list, tuple, str)):
+                    continue 
+                
+                # If the database returns a comma-separated string, make it a list
+                if isinstance(p_codes, str):
+                    p_codes = [c.strip() for c in p_codes.split(',') if c.strip()]
+                # --------------------------------------
+                
                 for p_code in p_codes:
                     product_to_supplier_ids.setdefault(p_code, []).append(sid)
 
@@ -280,6 +342,48 @@ def render_stock_replenishment():
                     allowed_supplier_ids = product_to_supplier_ids.get(product_code, [])
                     allowed_sup_names = [sup_id_to_name[sid] for sid in allowed_supplier_ids if sid in sup_id_to_name]
 
+                    # --- ⚡ LIVE DATABASE SUPPLIER SORTING ---
+                    product_name = o.get('product_name', 'Unknown')
+                    if allowed_sup_names:
+                        scores = []
+                        for sup_name in allowed_sup_names:
+                            sup_id = sup_map.get(sup_name)
+                            live_score = 0
+                            try:
+                                # 1. Ask Supabase for this supplier's history with this specific product
+                                url = f"{SUPABASE_URL}/rest/v1/historical_intake_data?supplier_id=eq.{sup_id}&product_code=eq.{product_code}&select=good_fulfillment"
+                                res = requests.get(url, headers=HEADERS)
+                                
+                                if res.status_code == 200:
+                                    data = res.json()
+                                    if len(data) > 0:
+                                        # Calculate exact reliability percentage
+                                        good_deliveries = sum(1 for d in data if d.get('good_fulfillment') == True)
+                                        live_score = good_deliveries / len(data)
+                                    else:
+                                        # 2. If no history for this item, check their OVERALL reliability
+                                        url_all = f"{SUPABASE_URL}/rest/v1/historical_intake_data?supplier_id=eq.{sup_id}&select=good_fulfillment"
+                                        res_all = requests.get(url_all, headers=HEADERS)
+                                        if res_all.status_code == 200 and len(res_all.json()) > 0:
+                                            all_data = res_all.json()
+                                            good_deliveries = sum(1 for d in all_data if d.get('good_fulfillment') == True)
+                                            live_score = good_deliveries / len(all_data)
+                            except Exception:
+                                pass
+                                
+                            scores.append({'name': sup_name, 'score': live_score})
+                        
+                        # Sort the most reliable supplier to the top!
+                        scores.sort(key=lambda x: x['score'], reverse=True)
+                        allowed_sup_names = [s['name'] for s in scores]
+                        
+                        # Show the Live Database Confidence Badge
+                        if scores and scores[0]['score'] > 0:
+                            best_score = scores[0]['score'] * 100
+                            st.markdown(f"<span style='font-size:0.75rem; color:#10b981; font-weight:bold'>⚡ Live Data: {best_score:.1f}% Reliable</span>", unsafe_allow_html=True)
+                    # ------------------------------------
+
+                    # --- UI DROPDOWN ---
                     if allowed_sup_names:
                         selected_sup_name = st.selectbox(
                             "Supplier",
@@ -292,7 +396,6 @@ def render_stock_replenishment():
                         selected_sup_id = None
                         c6.warning("No mapped supplier")
                         c6.caption("Map suppliers in Supplier Directory.")
-
                 with c7:
                     b1, b2 = st.columns(2)
                     if b1.button("✅", key=f"app_{o['order_id']}", help="Approve & Send to Supplier"):
@@ -466,7 +569,26 @@ def render_stock_replenishment():
                         elif status == 'SENT':
                             st.caption("Waiting supplier to mark Sent to Delivery")
                         elif status == 'IN_TRANSIT':
-                            if st.button("Mark Delivered 📥", key=f"deliv_{p['po_id']}", use_container_width=True):
+                            st.markdown("---")
+                            st.markdown("#### 🚚 Process Intake")
+                            
+                            actual_received = st.number_input(
+                                "Actual Quantity Received", 
+                                min_value=0, 
+                                value=qty, 
+                                key=f"actual_{p['po_id']}"
+                            )
+                            
+                            if st.button("Confirm Intake & Check Shortage 📥", key=f"deliv_{p['po_id']}", type="primary", use_container_width=True):
+                                variance = actual_received - qty
+                                
+                                if variance == 0:
+                                    st.success(f"✅ Perfect Delivery! {actual_received} units logged.")
+                                elif variance < 0:
+                                    st.error(f"⚠️ Shortage Detected: Missing {abs(variance)} units. Logged against supplier.")
+                                else:
+                                    st.warning(f"ℹ️ Over-supply: Received {variance} extra units.")
+                                    
                                 update_po_status(p['po_id'], 'DELIVERED')
 
     # ─────────────────────────────────────────────────────────────────
@@ -670,21 +792,3 @@ def render_stock_replenishment():
                 st.rerun()
         else:
             st.info("No suppliers exist in the database.")
-
-    # ─────────────────────────────────────────────────────────────────
-    # ─────────────────────────────────────────────────────────────────
-    # TAB 5: Shrinkage Analysis (Inventory Intake Dashboard)
-    # ─────────────────────────────────────────────────────────────────
-    with tab_shrink:
-        st.markdown("#### 📉 Shrinkage Analysis")
-        st.caption("Inventory intake analytics view only (workflow form hidden).")
-
-        try:
-            from pages.inventory_intake_page import render_shrinkage_analytics_only
-
-            render_shrinkage_analytics_only()
-        except Exception as exc:
-            st.error(f"Unable to load Inventory Intake dashboard: {exc}")
-
-    # Direct-send flow is used in Purchase Orders tab; preview modal removed.
-

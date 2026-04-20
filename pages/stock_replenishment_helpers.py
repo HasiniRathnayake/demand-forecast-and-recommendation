@@ -590,3 +590,22 @@ def delete_supplier(supplier_id):
     requests.delete(url, headers=HEADERS)
     st.toast("Supplier removed!", icon="🗑️")
     st.rerun()
+
+def fetch_supplier_quantities_per_product():
+    """Return product_code -> {supplier_id: total_quantity} from supplier_po_logs."""
+    url = f"{SUPABASE_URL}/rest/v1/supplier_po_logs?select=supplier_id,product_code,quantity"
+    resp = requests.get(url, headers=HEADERS)
+    if resp.status_code != 200:
+        return {}
+
+    quantities = {}
+    for row in resp.json() or []:
+        sid = row.get("supplier_id")
+        pcode = row.get("product_code")
+        qty = row.get("quantity", 0)
+        if not sid or not pcode:
+            continue
+        if pcode not in quantities:
+            quantities[pcode] = {}
+        quantities[pcode][sid] = quantities[pcode].get(sid, 0) + qty
+    return quantities

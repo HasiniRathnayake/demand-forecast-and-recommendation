@@ -150,25 +150,6 @@ def render_main_dashboard() -> None:
         show_customer_dashboard(user.get('customer_id'))
 
     elif role == "supplier":
-        st.markdown(
-            f'<div class="section-title">👋 Welcome, {username}! '
-            f'Open your supplier workspace.</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown("")
-        st.markdown(
-            """
-            <div class="metric-card dashboard-card" style="border-left:4px solid #7C3AED;max-width:520px;">
-                <div class="dashboard-card-icon">📨</div>
-                <div class="dashboard-card-title">Supplier Dashboard</div>
-                <div class="dashboard-card-desc">
-                    View your purchase orders, notes, and mark orders as sent to delivery.
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button("Open Supplier Dashboard →", key="nav_supplier_dashboard", use_container_width=False, type="primary"):
-            st.session_state.current_page = "supplier_dashboard"
-            st.rerun()
- 
+    # Auto-redirect to supplier dashboard immediately
+        st.session_state.current_page = "supplier_dashboard"
+        st.rerun()
