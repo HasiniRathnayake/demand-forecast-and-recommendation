@@ -491,7 +491,7 @@ elif page == "waste_monitor":
         show_savings_report()
 
     with tab6:
-        show_rl_predictions()    
+        show_rl_predictions()
 
 # ── Fallback ───────────────────────────────────────────────────────────────────
 else:
