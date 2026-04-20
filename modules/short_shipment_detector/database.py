@@ -55,7 +55,6 @@ def get_supabase_client():
         
         # Test connection with simple query
         test = client.table("suppliers").select("*").limit(1).execute()
-        st.success(" Connected to Supabase successfully")
         return client
         
     except Exception as e:

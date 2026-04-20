@@ -3,13 +3,13 @@ import streamlit as st
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from scripts.db_connection import DatabaseConnection
+from ui.styles import render_page_heading
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
 def show_email_history():
-    st.title("📧 Email History")
-    st.markdown("Track all campaigns sent to customers.")
+    render_page_heading("Email History")
     st.divider()
 
     db = DatabaseConnection()

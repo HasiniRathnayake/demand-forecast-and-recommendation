@@ -1,5 +1,6 @@
 import streamlit as st
 import sys, os
+from ui.styles import render_page_heading
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.db_connection import DatabaseConnection
@@ -32,11 +33,7 @@ def _save_customer_preferences(customer_id, email_enabled, promo_allowed):
 
 
 def show_customer_settings(customer_id):
-    st.markdown('<p class="main-header">⚙️ Promotion Preferences</p>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="sub-header">Choose which promotion emails you want to receive.</p>',
-        unsafe_allow_html=True,
-    )
+    render_page_heading("Promotion Preferences")
 
     if not customer_id:
         st.error("No customer account linked to this login.")

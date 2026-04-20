@@ -29,7 +29,7 @@ elif page == "main_dashboard":
 
 # ── Route: demand forecast module ─────────────────────────────────────────────
 elif page == "demand_forecast":
-    from ui.styles import inject_styles
+    from ui.styles import inject_styles, render_module_banner
     from ui.components.sidebar import render_sidebar
     from ui.components.forecast_tab import render_forecast_tab
     from ui.components.historical_tab import render_historical_tab
@@ -47,8 +47,7 @@ elif page == "demand_forecast":
             st.session_state.current_page = "main_dashboard"
             st.rerun()
     with col_title:
-        st.markdown(f'<p class="main-header">{APP_ICON} {APP_TITLE}</p>', unsafe_allow_html=True)
-        st.markdown(f'<p class="sub-header">{APP_SUBTITLE}</p>', unsafe_allow_html=True)
+        render_module_banner("Demand Forecast", icon="📊")
     with col_user:
         user = get_current_user()
         if user:
@@ -141,7 +140,7 @@ elif page == "demand_forecast":
     )
 # ── Route: customer dashboard ─────────────────────────────────────────────────
 elif page == "customer_dashboard":
-    from ui.styles import inject_styles
+    from ui.styles import inject_styles, render_module_banner
     from services.auth_service import get_current_user, logout, get_user_role
     inject_styles()
 
@@ -154,11 +153,14 @@ elif page == "customer_dashboard":
         st.session_state.current_page = "main_dashboard"
         st.rerun()
 
+    render_module_banner("Customer Dashboard", icon="📊")
+    st.markdown("---")
+
     from pages.customer_dashboard import show_customer_dashboard
     show_customer_dashboard(user.get('customer_id'))
 
 elif page == "supplier_dashboard":
-    from ui.styles import inject_styles
+    from ui.styles import inject_styles, render_module_banner
     from services.auth_service import get_current_user, logout
     inject_styles()
 
@@ -171,11 +173,14 @@ elif page == "supplier_dashboard":
         st.session_state.current_page = "main_dashboard"
         st.rerun()
 
+    render_module_banner("Supplier Dashboard", icon="📊")
+    st.markdown("---")
+
     from pages.supplier_dashboard import render_supplier_dashboard
     render_supplier_dashboard()
 
 elif page == "customer_settings":
-    from ui.styles import inject_styles
+    from ui.styles import inject_styles, render_module_banner
     from services.auth_service import get_current_user
     inject_styles()
 
@@ -188,12 +193,15 @@ elif page == "customer_settings":
         st.session_state.current_page = "customer_dashboard"
         st.rerun()
 
+    render_module_banner("Customer Settings", icon="📊")
+    st.markdown("---")
+
     from pages.customer_settings import show_customer_settings
     show_customer_settings(user.get('customer_id'))
 
 # ── Route: loyalty module ─────────────────────────────────────────────────────
 elif page == "loyalty":
-    from ui.styles import inject_styles
+    from ui.styles import inject_styles, render_module_banner
     from services.auth_service import get_current_user, logout
     inject_styles()
 
@@ -203,14 +211,7 @@ elif page == "loyalty":
             st.session_state.current_page = "main_dashboard"
             st.rerun()
     with col_title:
-        st.markdown(
-            '<p class="main-header">🎁 Smart Loyalty & Promotions</p>',
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            '<p class="sub-header">Customer segmentation, personalised offers & email campaigns</p>',
-            unsafe_allow_html=True
-        )
+        render_module_banner("Smart Loyalty & Promotions", icon="📊")
     with col_user:
         user = get_current_user()
         if user:
@@ -247,7 +248,7 @@ elif page == "loyalty":
     )
 # ── Route: short shipment detector ───────────────────────────────────────────
 elif page == "short_shipment":
-    from ui.styles import inject_styles
+    from ui.styles import inject_styles, render_module_banner
     from services.auth_service import get_current_user, logout
     inject_styles()
 
@@ -257,14 +258,7 @@ elif page == "short_shipment":
             st.session_state.current_page = "main_dashboard"
             st.rerun()
     with col_title:
-        st.markdown(
-            '<p class="main-header">🚚 Short-Shipment Detector</p>',
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            '<p class="sub-header">Detect and flag delivery shortfalls against purchase orders</p>',
-            unsafe_allow_html=True
-        )
+        render_module_banner("Short-Shipment Detector", icon="📊")
     with col_user:
         user = get_current_user()
         if user:
@@ -288,7 +282,7 @@ elif page == "short_shipment":
 
 # ── Route: stock replenishment ────────────────────────────────────────────────
 elif page == "stock_replenishment":
-    from ui.styles import inject_styles
+    from ui.styles import inject_styles, render_module_banner
     from services.auth_service import get_current_user, logout
     inject_styles()
 
@@ -298,14 +292,7 @@ elif page == "stock_replenishment":
             st.session_state.current_page = "main_dashboard"
             st.rerun()
     with col_title:
-        st.markdown(
-            '<p class="main-header">📦 Stock Replenishment</p>',
-            unsafe_allow_html=True
-        )
-        st.markdown(
-            '<p class="sub-header">Automated ML stock replenishment suggestions</p>',
-            unsafe_allow_html=True
-        )
+        render_module_banner("Stock Replenishment", icon="📊")
     with col_user:
         user = get_current_user()
         if user:
@@ -325,7 +312,7 @@ elif page == "stock_replenishment":
 
 # ── Route: smart inventory intake ────────────────────────────────────────────
 elif page == "inventory_intake":
-    from ui.styles import inject_styles
+    from ui.styles import inject_styles, render_module_banner
     from services.auth_service import get_current_user, logout
     from pages.inventory_intake_page import render_inventory_intake
 
@@ -337,14 +324,7 @@ elif page == "inventory_intake":
             st.session_state.current_page = "main_dashboard"
             st.rerun()
     with col_title:
-        st.markdown(
-            '<p class="main-header">🏪 Smart Inventory Intake</p>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<p class="sub-header">AI-assisted receiving validation and anomaly capture</p>',
-            unsafe_allow_html=True,
-        )
+        render_module_banner("Smart Inventory Intake", icon="📊")
     with col_user:
         user = get_current_user()
         if user:
@@ -362,7 +342,7 @@ elif page == "inventory_intake":
 
 # ── Route: admin staff approvals ─────────────────────────────────────────────
 elif page == "admin_staff_approvals":
-    from ui.styles import inject_styles
+    from ui.styles import inject_styles, render_module_banner
     from services.auth_service import get_current_user, get_user_role, logout
     from pages.admin_staff_approvals import render_admin_staff_approvals
 
@@ -379,14 +359,7 @@ elif page == "admin_staff_approvals":
             st.session_state.current_page = "main_dashboard"
             st.rerun()
     with col_title:
-        st.markdown(
-            '<p class="main-header">🛡️ Admin Controls</p>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<p class="sub-header">Manage pending staff account approvals</p>',
-            unsafe_allow_html=True,
-        )
+        render_module_banner("Admin Staff Approvals", icon="📊")
     with col_user:
         user = get_current_user()
         if user:
@@ -404,7 +377,7 @@ elif page == "admin_staff_approvals":
 
 # ── Route: waste & performance monitor ───────────────────────────────────────
 elif page == "waste_monitor":
-    from ui.styles            import inject_styles
+    from ui.styles            import inject_styles, render_module_banner
     from ui.sidebar           import render_sidebar
     from pages.dashboard      import show_dashboard
     from pages.waste_records  import show_waste_records
@@ -428,19 +401,7 @@ elif page == "waste_monitor":
             st.rerun()
 
     with col_title:
-        st.markdown(
-            """
-            <div style="text-align:center;padding-top:0.3rem">
-                <span style="font-size:2.2rem;font-weight:700;color:#2563EB;">
-                    📊 Sunrise Supermarket
-                </span><br>
-                <span style="font-size:1.1rem;color:#64748B;">
-                    Waste &amp; Performance Monitor
-                </span>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        render_module_banner("Waste & Performance Monitor", icon="📊")
 
     with col_spacer:
         pass

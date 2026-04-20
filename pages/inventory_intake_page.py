@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pandas as pd
 import streamlit as st
+from ui.styles import render_page_heading
 
 from data.inventory_intake_repository import (
     fetch_ai_products,
@@ -251,11 +252,7 @@ def render_inventory_intake() -> None:
     _inject_inventory_styles()
     _init_state()
 
-    st.markdown('<div class="ii-main-header">Smart Stock Audit</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="ii-sub-header">Cycle counting logic bridging ML system stock with physical shelf anomalies</div>',
-        unsafe_allow_html=True,
-    )
+    render_page_heading("Smart Stock Audit")
 
     _render_sidebar()
 
@@ -272,10 +269,6 @@ def render_shrinkage_analytics_only() -> None:
     """Render only the shrinkage analytics dashboard without intake workflow form."""
     _inject_inventory_styles()
 
-    st.markdown('<div class="ii-main-header">Shrinkage Analytics</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="ii-sub-header">Inventory variance trends from recent intake audits</div>',
-        unsafe_allow_html=True,
-    )
+    render_page_heading("Shrinkage Analytics")
 
     _render_analytics_tab()

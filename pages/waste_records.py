@@ -8,6 +8,7 @@ from datetime import date, datetime
 import time
 import plotly.express as px
 import streamlit as st
+from ui.styles import render_page_heading
 from utils.database   import fetch_waste_records, insert_waste_record, product_code_exists
 from utils.helpers    import format_lkr, fmt_date, fmt_datetime
 from utils.validators import (
@@ -17,7 +18,7 @@ from utils.validators import (
 
 
 def show_waste_records(start: date, end: date) -> None:
-    st.markdown("<h1 style='font-size:3.5rem;font-weight:900;letter-spacing:-1px;'>Waste Records Management</h1>", unsafe_allow_html=True)
+    render_page_heading("Waste Records Management")
     st.divider()
 
     st.markdown("""

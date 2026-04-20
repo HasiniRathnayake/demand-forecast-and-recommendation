@@ -9,7 +9,7 @@ from services.auth_service import (
     require_auth,
     review_staff_approval,
 )
-from ui.styles import inject_styles
+from ui.styles import inject_styles, render_page_heading
 
 
 def render_admin_staff_approvals() -> None:
@@ -19,11 +19,7 @@ def render_admin_staff_approvals() -> None:
     current_user = get_current_user() or {}
     reviewer = current_user.get("username", "admin")
 
-    st.markdown('<p class="main-header">✅ Staff Approval Center</p>', unsafe_allow_html=True)
-    st.markdown(
-        '<p class="sub-header">Approve or reject newly registered staff accounts before they can log in.</p>',
-        unsafe_allow_html=True,
-    )
+    render_page_heading("Staff Approval Center")
     st.markdown("---")
 
     try:

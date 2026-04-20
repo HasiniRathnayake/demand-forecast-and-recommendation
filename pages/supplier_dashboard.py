@@ -8,6 +8,7 @@ import streamlit as st
 
 from config.settings import SUPABASE_KEY, SUPABASE_URL
 from services.auth_service import get_current_user, require_auth
+from ui.styles import render_page_heading
 
 HEADERS = {
     "apikey": SUPABASE_KEY,
@@ -39,8 +40,8 @@ def render_supplier_dashboard() -> None:
     user = get_current_user() or {}
     supplier_id = user.get("supplier_id")
 
-    st.markdown("#### 📨 Supplier Dashboard")
-    st.caption("Track your orders and update delivery progress.")
+    render_page_heading("Supplier Dashboard")
+    st.markdown("---")
 
     if not supplier_id:
         st.error("Your account is not linked to a supplier record. Contact admin.")

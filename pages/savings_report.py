@@ -8,12 +8,13 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
+from ui.styles import render_page_heading
 from utils.database import fetch_ai_performance, fetch_waste_records
 from utils.helpers  import format_lkr
 
 
 def show_savings_report() -> None:
-    st.markdown("<h1 style='font-size:3.5rem;font-weight:900;letter-spacing:-1px;'>AI Savings Analysis</h1>", unsafe_allow_html=True)
+    render_page_heading("AI Savings Analysis")
     st.divider()
 
     ai_df    = fetch_ai_performance()

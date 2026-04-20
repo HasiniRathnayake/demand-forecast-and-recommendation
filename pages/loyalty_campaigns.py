@@ -8,6 +8,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.db_connection import DatabaseConnection
 from scripts.offers_engine import OffersEngine
 from scripts.email_sender import EmailSender
+from ui.styles import render_page_heading
 import pandas as pd
 from datetime import date, timedelta
 
@@ -309,7 +310,7 @@ def _load_eligible(selected_segs_tuple, selected_tastes_tuple):
 def _build_preview(tmpl, campaign_name, custom_message,
                    discount_pct, promo_start, valid_until, sample_name, sample_seg):
     """Build the HTML email preview string."""
-    return f"""<!DOCTYPE html>
+    preview_html = f"""<!DOCTYPE html>
 <html>
 <body style="margin:0;padding:8px;background:#f0f0f0;">
 <div style="max-width:420px;margin:auto;font-family:Arial,sans-serif;
@@ -365,13 +366,12 @@ def _build_preview(tmpl, campaign_name, custom_message,
   </div>
 </div>
 </body></html>"""
+    return preview_html
 
 
 # ── Main page ─────────────────────────────────────────────────────────────────
 def show_promotions():
-
-    st.title("🎯 Campaign Builder")
-    st.markdown("Create and send personalised email campaigns to your customers.")
+    render_page_heading("Campaign Builder")
     st.divider()
 
     # Load segments once (cached)
