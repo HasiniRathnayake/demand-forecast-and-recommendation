@@ -5,8 +5,10 @@ import re
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.db_connection import DatabaseConnection
 from scripts.apriori_engine import AprioriEngine
+from data.db_client import get_client
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from datetime import date, datetime, timedelta
 
 # ── Segment config ────────────────────────────────────────────────────────────
@@ -52,11 +54,29 @@ SEGMENT_PERKS = {
 }
 
 
+def _assignment_segment_column():
+    db = DatabaseConnection()
+    cols = db.fetch_all(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'customer_segment_assignment'
+        """
+    )
+    names = {c[0] for c in cols}
+    if 'segment_id' in names:
+        return 'segment_id'
+    if 'segment' in names:
+        return 'segment'
+    return 'segment_id'
+
+
 # ── Cached data loaders ───────────────────────────────────────────────────────
 @st.cache_data(ttl=300, show_spinner=False)
 def _get_profile(customer_id):
     db = DatabaseConnection()
-    return db.fetch_one("""
+    segment_col = _assignment_segment_column()
+    return db.fetch_one(f"""
         SELECT c.customer_id, c.first_name, c.last_name, c.email,
                c.join_date, c.last_active_date,
                cs.segment_name
@@ -64,7 +84,7 @@ def _get_profile(customer_id):
         LEFT JOIN customer_segment_assignment csa
                ON c.customer_id = csa.customer_id
         LEFT JOIN customer_segments cs
-               ON csa.segment_id = cs.segment_id
+         ON csa.{segment_col} = cs.segment_id
         WHERE c.customer_id = %s
     """, [customer_id])
 
@@ -229,6 +249,189 @@ def _get_recommendations(customer_id):
     return engine.get_recommendations(customer_id, top_n=6)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_restock_candidates(customer_id, horizon_days=7):
+    """Estimate which products the customer may need to restock soon."""
+    db = DatabaseConnection()
+    rows = db.fetch_all(
+        """
+        WITH product_events AS (
+            SELECT
+                p.product_code,
+                p.product_name,
+                p.category,
+                t.transaction_date::date AS tx_date,
+                LAG(t.transaction_date::date) OVER (
+                    PARTITION BY p.product_code
+                    ORDER BY t.transaction_date::date
+                ) AS prev_date
+            FROM transaction_items ti
+            JOIN transactions t ON ti.transaction_id = t.transaction_id
+            JOIN product_catalog p ON ti.product_code = p.product_code
+            WHERE t.customer_id = %s
+        ),
+        product_summary AS (
+            SELECT
+                product_code,
+                product_name,
+                category,
+                COUNT(*) AS buy_count,
+                MAX(tx_date) AS last_purchase_date,
+                AVG((tx_date - prev_date)) FILTER (WHERE prev_date IS NOT NULL) AS avg_gap_days
+            FROM product_events
+            GROUP BY product_code, product_name, category
+        )
+        SELECT
+            product_code,
+            product_name,
+            category,
+            buy_count,
+            last_purchase_date,
+            COALESCE(avg_gap_days, 30) AS avg_gap_days,
+            (CURRENT_DATE - last_purchase_date) AS days_since_last,
+            (
+                last_purchase_date
+                + (COALESCE(avg_gap_days, 30)::int * INTERVAL '1 day')
+            )::date AS expected_restock_date
+        FROM product_summary
+        WHERE buy_count >= 2
+        ORDER BY expected_restock_date ASC, buy_count DESC
+        LIMIT 10
+        """,
+        [customer_id],
+    )
+
+    today = date.today()
+    reminders = []
+    for row in rows:
+        if len(row) < 8:
+            continue
+
+        expected_date = row[7]
+        if not expected_date:
+            continue
+
+        days_to_due = (expected_date - today).days
+        if days_to_due > horizon_days:
+            continue
+
+        status = "Overdue" if days_to_due <= 0 else "Due Soon"
+        reminders.append(
+            {
+                "product_code": row[0],
+                "product_name": row[1],
+                "category": row[2],
+                "buy_count": int(row[3] or 0),
+                "last_purchase_date": row[4],
+                "avg_gap_days": int(float(row[5] or 0)),
+                "days_since_last": int(float(row[6] or 0)),
+                "expected_restock_date": expected_date,
+                "days_to_due": days_to_due,
+                "status": status,
+            }
+        )
+
+    return reminders
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _get_restock_csv_alerts(customer_id):
+    """Load restock alerts from restock_features in Postgres/Supabase."""
+    db = DatabaseConnection()
+    customer_key = str(customer_id).strip()
+
+    # Primary path: SQL table via configured DATABASE_URL / SUPABASE_DB_URL.
+    table_rows = db.fetch_all(
+        """
+        SELECT
+            customer_id,
+            product_code,
+            purchase_count,
+            last_purchase_date,
+            avg_purchase_interval,
+            days_since_last_purchase,
+            needs_restock,
+            product_name
+        FROM restock_features
+        WHERE TRIM(customer_id::text) = %s
+          AND COALESCE(needs_restock, 0) = 1
+        ORDER BY days_since_last_purchase DESC, avg_purchase_interval ASC
+        """,
+        [customer_key],
+    )
+
+    if not table_rows:
+        # Secondary path: Supabase API client (in case SQL connection points elsewhere).
+        try:
+            client = get_client()
+            resp = (
+                client.table("restock_features")
+                .select(
+                    "customer_id,product_code,purchase_count,last_purchase_date,"
+                    "avg_purchase_interval,days_since_last_purchase,needs_restock,product_name"
+                )
+                .eq("customer_id", customer_key)
+                .eq("needs_restock", 1)
+                .order("days_since_last_purchase", desc=True)
+                .execute()
+            )
+            table_rows = [
+                (
+                    r.get("customer_id"),
+                    r.get("product_code"),
+                    r.get("purchase_count"),
+                    r.get("last_purchase_date"),
+                    r.get("avg_purchase_interval"),
+                    r.get("days_since_last_purchase"),
+                    r.get("needs_restock"),
+                    r.get("product_name"),
+                )
+                for r in (resp.data or [])
+            ]
+        except Exception:
+            table_rows = []
+
+    customer_rows = pd.DataFrame(
+        table_rows,
+        columns=[
+            "customer_id",
+            "product_code",
+            "purchase_count",
+            "last_purchase_date",
+            "avg_purchase_interval",
+            "days_since_last_purchase",
+            "needs_restock",
+            "product_name",
+        ],
+    )
+
+    if customer_rows.empty:
+        return []
+
+    alerts = []
+    for _, row in customer_rows.sort_values(
+        ["days_since_last_purchase", "avg_purchase_interval"],
+        ascending=[False, True],
+    ).iterrows():
+        alerts.append(
+            {
+                "product_code": str(row["product_code"]),
+                "product_name": str(row["product_name"]),
+                "category": "Restock alert",
+                "buy_count": int(row["purchase_count"] or 0),
+                "last_purchase_date": row["last_purchase_date"],
+                "avg_gap_days": int(float(row["avg_purchase_interval"] or 0)),
+                "days_since_last": int(float(row["days_since_last_purchase"] or 0)),
+                "expected_restock_date": None,
+                "days_to_due": None,
+                "status": "Due Soon",
+                "source": "csv",
+            }
+        )
+
+    return alerts
+
+
 # ── Main dashboard ────────────────────────────────────────────────────────────
 def show_customer_dashboard(customer_id):
     if not customer_id:
@@ -254,6 +457,8 @@ def show_customer_dashboard(customer_id):
     active_promos   = _get_active_promotions(emails)
     fav_products    = _get_favourite_products(customer_id)
     recommendations = _get_recommendations(customer_id)
+    csv_restock_items = _get_restock_csv_alerts(customer_id)
+    restock_items   = csv_restock_items or _get_restock_candidates(customer_id)
 
     if not profile:
         st.error("Customer profile not found.")
@@ -389,13 +594,50 @@ def show_customer_dashboard(customer_id):
                 )
         else:
             st.markdown(
-
-                '<div class="alert-info">No promotions yet — '
-                'check back soon for exclusive offers!</div>',
-
                 '<div class="alert-info">No active promotions right now — '
                 'check back soon for fresh offers!</div>',
+                unsafe_allow_html=True
+            )
 
+        st.markdown('<div class="section-title">🔄 Restock Reminders</div>',
+                    unsafe_allow_html=True)
+        if restock_items:
+            for item in restock_items:
+                is_csv_alert = item.get("source") == "csv"
+                badge_color = "#dc2626" if item['status'] == "Overdue" else "#92400e"
+                badge_bg = "#fee2e2" if item['status'] == "Overdue" else "#fef3c7"
+                if is_csv_alert:
+                    due_label = f"{item['days_since_last']} days since last purchase"
+                else:
+                    due_label = (
+                        f"{abs(item['days_to_due'])} days overdue"
+                        if item['days_to_due'] is not None and item['days_to_due'] <= 0
+                        else f"Due in {item['days_to_due']} day(s)"
+                    )
+
+                st.markdown(
+                    f'<div class="metric-card" style="margin-bottom:10px;padding:12px 16px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">'
+                    f'<div>'
+                    f'<div style="font-weight:700;font-size:14px;">{item["product_name"]}</div>'
+                    f'<div style="font-size:12px;color:var(--text-muted);">{item["category"]}</div>'
+                    f'</div>'
+                    f'<div style="font-size:11px;color:{badge_color};background:{badge_bg};'
+                    f'padding:3px 8px;border-radius:999px;font-weight:700;">{item["status"]}</div>'
+                    f'</div>'
+                    f'<div style="font-size:12px;color:var(--text-muted);margin-top:8px;">'
+                    f'{due_label} · Last bought {item["days_since_last"]} day(s) ago</div>'
+                    f'<div style="font-size:12px;color:var(--text-muted);">'
+                    f'Flag source: {"prepared CSV" if is_csv_alert else "live purchase history"}</div>'
+                    f'<div style="font-size:12px;color:var(--text-muted);">'
+                    f'Why: You usually rebuy this every ~{item["avg_gap_days"]} day(s).</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                '<div class="alert-info">No restock reminders yet. As your purchase pattern grows, '
+                'we will predict what you may need next.</div>',
                 unsafe_allow_html=True
             )
 
@@ -406,13 +648,27 @@ def show_customer_dashboard(customer_id):
         st.markdown('<div class="section-title">🤖 AI-Powered Recommendations</div>',
                     unsafe_allow_html=True)
 
+        personalized_count = sum(
+            1
+            for r in recommendations
+            if r.get('source') == 'association' or float(r.get('confidence', 0) or 0) > 0
+        )
+
         # Show which method was used
-        if recommendations and recommendations[0]['confidence'] > 0:
+        if recommendations and personalized_count == len(recommendations):
             st.markdown(
                 '<div class="alert-success" style="margin-bottom:16px;">'
                 '🤖 <strong>Powered by Apriori Algorithm</strong> — '
                 'recommendations based on shopping patterns of all customers.'
                 '</div>',
+                unsafe_allow_html=True
+            )
+        elif recommendations and personalized_count > 0:
+            st.markdown(
+                f'<div class="alert-info" style="margin-bottom:16px;">'
+                f'🤖 <strong>Mixed recommendations</strong> — {personalized_count} based on your buying pattern '
+                f'and {len(recommendations) - personalized_count} popular products to complete the list.'
+                f'</div>',
                 unsafe_allow_html=True
             )
         else:
@@ -432,6 +688,11 @@ def show_customer_dashboard(customer_id):
                 saving      = round(unit_price - offer_price, 2)
                 confidence  = rec.get('confidence', 0)
                 reason      = rec.get('reason', 'Popular product')
+                source      = rec.get('source', 'association' if confidence > 0 else 'popular')
+                if source == 'association':
+                    why_text = 'Recommended from buying patterns similar to your previous baskets.'
+                else:
+                    why_text = 'Suggested as a popular product while we gather more personal pattern data.'
 
                 with cols[i % 3]:
                     saving_html = (
@@ -449,14 +710,26 @@ def show_customer_dashboard(customer_id):
                         f'<div style="font-size:10px;color:var(--text-muted);'
                         f'margin-top:4px;">⭐ {reason}</div>'
                     )
+                    source_badge = (
+                        '<div style="font-size:10px;color:#065f46;background:#d1fae5;'
+                        'display:inline-block;padding:2px 6px;border-radius:999px;margin-bottom:8px;">'
+                        'Pattern-based</div>'
+                        if source == 'association' else
+                        '<div style="font-size:10px;color:#92400e;background:#fef3c7;'
+                        'display:inline-block;padding:2px 6px;border-radius:999px;margin-bottom:8px;">'
+                        'Popular fallback</div>'
+                    )
                     st.markdown(
                         f'<div class="metric-card" style="text-align:center;'
                         f'padding:16px;margin-bottom:12px;">'
+                        f'{source_badge}'
                         f'<div style="font-size:26px;margin-bottom:8px;">🛒</div>'
                         f'<div style="font-weight:700;font-size:13px;'
                         f'margin-bottom:3px;">{rec["product_name"]}</div>'
                         f'<div style="font-size:11px;color:var(--text-muted);'
                         f'margin-bottom:8px;">{rec["category"]}</div>'
+                        f'<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">'
+                        f'Why: {why_text}</div>'
                         f'<div style="text-decoration:line-through;'
                         f'color:var(--text-muted);font-size:12px;">'
                         f'Rs.{unit_price:.2f}</div>'
@@ -482,18 +755,43 @@ def show_customer_dashboard(customer_id):
                 fav_products,
                 columns=['Product', 'Category', 'Total Qty', 'Times Bought']
             )
-            fig = px.bar(
-                df_p, x='Product', y='Times Bought',
-                color='Category',
-                color_discrete_sequence=px.colors.qualitative.Bold
+            # Plotly can raise KeyError when category order contains values not present
+            # in grouped data; normalize to plain strings and provide explicit orders.
+            df_p['Product'] = df_p['Product'].astype(str).str.strip()
+            df_p['Category'] = df_p['Category'].astype(str).str.strip()
+            df_p = df_p[df_p['Product'] != '']
+            df_p = df_p[df_p['Category'] != '']
+
+            # Use graph_objects instead of px.bar to avoid category group lookup KeyError.
+            palette = px.colors.qualitative.Bold
+            categories = sorted(df_p['Category'].dropna().unique().tolist())
+            color_map = {cat: palette[i % len(palette)] for i, cat in enumerate(categories)}
+            bar_colors = [color_map.get(cat, '#2563EB') for cat in df_p['Category']]
+
+            fig = go.Figure(
+                data=[
+                    go.Bar(
+                        x=df_p['Product'],
+                        y=df_p['Times Bought'],
+                        marker_color=bar_colors,
+                        customdata=df_p[['Category']],
+                        hovertemplate=(
+                            'Product: %{x}<br>'
+                            'Times Bought: %{y}<br>'
+                            'Category: %{customdata[0]}<extra></extra>'
+                        ),
+                    )
+                ]
             )
             fig.update_layout(
                 height=300,
                 margin=dict(t=20, b=20),
+                xaxis_title='Product',
+                yaxis_title='Times Bought',
                 plot_bgcolor='rgba(0,0,0,0)',
                 paper_bgcolor='rgba(0,0,0,0)'
             )
-            st.plotly_chart(fig, use_container_width=True,
+            st.plotly_chart(fig, width="stretch",
                             config={"displaylogo": False})
 
     # ══════════════════════════════════════════════════════
@@ -524,7 +822,7 @@ def show_customer_dashboard(customer_id):
                 plot_bgcolor='rgba(0,0,0,0)',
                 paper_bgcolor='rgba(0,0,0,0)'
             )
-            st.plotly_chart(fig2, use_container_width=True,
+            st.plotly_chart(fig2, width="stretch",
                             config={"displaylogo": False})
 
             # Table
@@ -537,7 +835,7 @@ def show_customer_dashboard(customer_id):
             ).dt.strftime('%d %b %Y')
             st.dataframe(
                 df_display[['ID', 'Date', 'Amount', 'Items']],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True
             )
         else:
@@ -596,8 +894,8 @@ def show_customer_dashboard(customer_id):
             ("🆕 New Member",      0,     '#0891B2'),
             ("🛍️ Special Member",  1000,  '#2563EB'),
             ("🛒 Loyal Member",    5000,  '#059669'),
-            ("💎 Premium Member",  15000, '#7C3AED'),
-            ("⭐ VIP Member",      10000, '#d4ac0d'),
+            ("💎 Premium Member",  10000, '#7C3AED'),
+            ("⭐ VIP Member",      15000, '#d4ac0d'),
         ]
 
         for tier_name, threshold, color in tiers:

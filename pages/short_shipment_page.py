@@ -9,6 +9,7 @@ import sys
 import os
 import smtplib
 from email.mime.text import MIMEText
+from ui.styles import inject_styles
 
 # =========================================================
 # HELPER FUNCTIONS (OUTSIDE render_short_shipment)
@@ -44,6 +45,45 @@ def get_delivery_drafts(limit=50):
     """
     drafts_df = pd.read_sql_query(query, db_conn, params=[limit])
     db_conn.close()
+    return drafts_df
+
+def get_delivery_drafts_for_reconciliation(start_date, end_date):
+    db_conn = sqlite3.connect('supermarket.db')
+    query = """
+        SELECT
+            delivery_date AS date,
+            order_number AS invoice,
+            supplier_name AS supplier,
+            product_name AS product,
+            ordered_quantity AS ordered,
+            received_quantity AS received,
+            discrepancy_quantity AS discrepancy_qty,
+            discrepancy_percentage AS discrepancy_pct,
+            0.0 AS unit_price,
+            0.0 AS financial_impact,
+            source_type AS source
+        FROM delivery_drafts
+        WHERE date(delivery_date) BETWEEN date(?) AND date(?)
+        ORDER BY date(delivery_date) DESC
+    """
+    try:
+        drafts_df = pd.read_sql_query(
+            query,
+            db_conn,
+            params=[start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')],
+        )
+    except Exception:
+        drafts_df = pd.DataFrame()
+    finally:
+        db_conn.close()
+
+    if not drafts_df.empty:
+        if 'product_code' not in drafts_df.columns:
+            # Draft rows don't store product_code; use product name as stable fallback key.
+            drafts_df['product_code'] = drafts_df['product'].fillna('UNKNOWN')
+        drafts_df['status'] = drafts_df['discrepancy_qty'].apply(
+            lambda x: 'Short' if x < 0 else 'Over' if x > 0 else 'Accurate'
+        )
     return drafts_df
 
 def save_delivery_draft(order_number, supplier_name, product_name, ordered_qty, received_qty, delivery_date, source_type):
@@ -284,6 +324,7 @@ from modules.short_shipment_detector.utils import (
 # MAIN RENDER FUNCTION
 # =========================================================
 def render_short_shipment():
+    inject_styles()
     
     from modules.short_shipment_detector.database import (
         get_db_connection, init_database,
@@ -296,59 +337,6 @@ def render_short_shipment():
     
     conn = get_db_connection()
     conn_type = "supabase" if hasattr(conn, 'table') else "sqlite"
-    
-    # CSS Styling
-    st.markdown("""
-        <style>
-        .main-title {
-            font-size: 2rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            text-align: center;
-            margin-bottom: 0.5rem;
-        }
-        .subtitle {
-            text-align: center;
-            color: #6c757d;
-            margin-bottom: 1.5rem;
-        }
-        .section-header {
-            font-size: 1.3rem;
-            font-weight: 600;
-            color: #2c3e50;
-            border-left: 4px solid #667eea;
-            padding-left: 12px;
-            margin: 20px 0 15px 0;
-        }
-        div[data-testid="stMetric"] {
-            background: linear-gradient(135deg, #f5f7fa 0%, #e4e8f0 100%);
-            border-radius: 10px;
-            padding: 10px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-        }
-        .footer {
-            text-align: center;
-            padding: 15px;
-            margin-top: 20px;
-            color: #6c757d;
-            font-size: 0.75rem;
-            border-top: 1px solid #dee2e6;
-        }
-        .stButton > button {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            border-radius: 8px;
-            transition: all 0.3s ease;
-        }
-        .stButton > button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
-        }
-        </style>
-    """, unsafe_allow_html=True)
     
    
     def get_products_from_catalog():
@@ -480,9 +468,16 @@ def render_short_shipment():
                             'status': 'Short' if disc_qty < 0 else 'Over' if disc_qty > 0 else 'Accurate',
                             'source': 'Finalized'
                         })
-                return pd.DataFrame(data)
+                finalized_df = pd.DataFrame(data)
+                drafts_df = get_delivery_drafts_for_reconciliation(start_date, end_date)
+
+                if finalized_df.empty:
+                    return drafts_df
+                if drafts_df.empty:
+                    return finalized_df
+                return pd.concat([finalized_df, drafts_df], ignore_index=True)
             else:
-                return pd.DataFrame()
+                return get_delivery_drafts_for_reconciliation(start_date, end_date)
         except Exception as e:
             st.error(f"Error fetching data: {e}")
             return pd.DataFrame()
@@ -490,6 +485,9 @@ def render_short_shipment():
     def calculate_next_order_adjustment(supplier_data):
         if supplier_data.empty:
             return None
+        if 'product_code' not in supplier_data.columns:
+            supplier_data = supplier_data.copy()
+            supplier_data['product_code'] = supplier_data.get('product', pd.Series(['UNKNOWN'] * len(supplier_data)))
         product_summary = supplier_data.groupby(['supplier', 'product_code', 'product']).agg({
             'ordered': 'sum',
             'received': 'sum',
@@ -555,7 +553,7 @@ def render_short_shipment():
     # TAB 1: DASHBOARD & ORDER RECONCILIATION
     # =========================================================
     with tab1:
-        st.markdown('<div class="section-header">📊 Dashboard & Order Reconciliation</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">📊 Dashboard & Order Reconciliation</div>', unsafe_allow_html=True)
         
         col1, col2 = st.columns(2)
         with col1:
@@ -564,6 +562,23 @@ def render_short_shipment():
             rec_end = st.date_input("📅 To Date", value=date.today(), key="recon_end_date")
         
         rec_df = get_delivery_data_for_reconciliation(rec_start, rec_end)
+        if not rec_df.empty:
+            required_defaults = {
+                'supplier': 'Unknown Supplier',
+                'product': 'Unknown Product',
+                'product_code': None,
+                'ordered': 0.0,
+                'received': 0.0,
+                'discrepancy_qty': 0.0,
+                'financial_impact': 0.0,
+            }
+            for col, default in required_defaults.items():
+                if col not in rec_df.columns:
+                    rec_df[col] = default
+
+            rec_df['product_code'] = rec_df['product_code'].fillna(rec_df['product']).fillna('UNKNOWN')
+            rec_df['supplier'] = rec_df['supplier'].fillna('Unknown Supplier')
+            rec_df['product'] = rec_df['product'].fillna('Unknown Product')
         
         if rec_df.empty:
             st.info("📭 No delivery data found for the selected period.")
@@ -589,7 +604,7 @@ def render_short_shipment():
             status_counts.columns = ['Status', 'Count']
             status_map = {'Short': '⚠️ Short Shipped', 'Over': '📦 Over Delivered', 'Accurate': '✅ Accurate'}
             status_counts['Display Status'] = status_counts['Status'].map(status_map)
-            fig = px.pie(status_counts, values='Count', names='Display Status', title='Delivery Status Distribution', hole=0.4, color_discrete_sequence=['#e74c3c','#f39c12','#2ecc71'])
+            fig = px.pie(status_counts, values='Count', names='Display Status', title='Delivery Status Distribution', hole=0.4)
             fig.update_layout(height=400)
             st.plotly_chart(fig, use_container_width=True)
             
@@ -630,7 +645,7 @@ def render_short_shipment():
     # TAB 2: RECORD DELIVERY WITH AUTO-FILL & EMAIL ALERTS
     # =========================================================
     with tab2:
-        st.markdown('<div class="section-header">📦 Record New Delivery</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title">📦 Record New Delivery</div>', unsafe_allow_html=True)
 
         if conn_type == "supabase":
             suppliers_df = pd.DataFrame(conn.table("suppliers").select("supplier_id, supplier_name, email").execute().data)

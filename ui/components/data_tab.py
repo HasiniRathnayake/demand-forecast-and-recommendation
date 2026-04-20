@@ -225,7 +225,7 @@ def _render_manual_override(forecast_df: pd.DataFrame, product: dict) -> None:
         st.warning("Generate a forecast first before applying overrides.")
         return
 
-    # ── Initialize session state flags ─────────────────────────────────────────
+    # Initialize session state flags
     # These prevent success message re-firing when switching tabs
     if "override_saved" not in st.session_state:
         st.session_state.override_saved = False
@@ -286,7 +286,7 @@ def _render_manual_override(forecast_df: pd.DataFrame, product: dict) -> None:
         key="override_notes",
     )
 
-    # ── Validation ─────────────────────────────────────────────────────────────
+    # Validation
     errors: list[str] = []
 
     if override_val <= 0:
@@ -357,9 +357,9 @@ def _render_override_history(product: dict) -> None:
         st.info(
             "No manual overrides recorded yet for this product. "
             "Use the Manual Override tab to create one."
-        
         )
-        
+        return
+
     st.markdown(
         f'<div class="alert-info">'
         f'<strong>{len(overrides)} override(s)</strong> recorded for '
@@ -368,7 +368,7 @@ def _render_override_history(product: dict) -> None:
         unsafe_allow_html=True,
     )
     st.markdown("")
-        
+
     rows = []
     for ov in overrides:
         ai_val = ov.get("original_ai_demand")
