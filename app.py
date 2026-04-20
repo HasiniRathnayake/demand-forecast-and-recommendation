@@ -165,15 +165,20 @@ elif page == "supplier_dashboard":
     inject_styles()
 
     user = get_current_user()
-    if not user or user.get('role') not in ('supplier', 'admin'):
+    if not user or user.get('role') != 'supplier':
         st.session_state.current_page = "main_dashboard"
         st.rerun()
 
-    if st.button("← Back", key="back_supplier"):
-        st.session_state.current_page = "main_dashboard"
-        st.rerun()
+    col_title, col_user = st.columns([5, 1])
+    
+    with col_title:
+        render_module_banner("Supplier Dashboard", icon="📊")
+    with col_user:
+        if user:
+            st.caption(f"👤 {user.get('username','').capitalize()}")
+        if st.button("Logout", key="supplier_route_logout"):
+            logout()
 
-    render_module_banner("Supplier Dashboard", icon="📊")
     st.markdown("---")
 
     from pages.supplier_dashboard import render_supplier_dashboard

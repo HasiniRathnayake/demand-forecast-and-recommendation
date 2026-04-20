@@ -317,49 +317,49 @@ def _build_preview(tmpl, campaign_name, custom_message,
             border-radius:14px;overflow:hidden;
             box-shadow:0 4px 20px rgba(0,0,0,0.12);">
 
-  <div style="background:{tmpl['color']};padding:20px;text-align:center;">
-    <div style="font-size:26px;">🛒</div>
-    <div style="color:#fff;font-size:18px;font-weight:800;
-                letter-spacing:1px;margin-top:4px;">SUNRISE SUPER</div>
-    <div style="color:rgba(255,255,255,0.85);font-size:10px;
-                letter-spacing:2px;margin-top:3px;text-transform:uppercase;">
+  <div style="background:{tmpl['color']};padding:25px;text-align:center;">
+    <div style="font-size:32px;">🛒</div>
+    <div style="color:#fff;font-size:22px;font-weight:800;
+                letter-spacing:1px;margin-top:6px;">SUNRISE SUPER</div>
+    <div style="color:rgba(255,255,255,0.85);font-size:12px;
+                letter-spacing:2px;margin-top:5px;text-transform:uppercase;">
       {campaign_name}
     </div>
   </div>
 
-  <div style="padding:20px;background:#fff;">
-    <h2 style="color:#2c3e50;margin:0 0 3px;font-size:16px;">
+  <div style="padding:25px;background:#fff;">
+    <h2 style="color:#2c3e50;margin:0 0 5px;font-size:20px;">
       Hi {sample_name}! 👋
     </h2>
-    <p style="color:#aaa;font-size:10px;margin:0 0 12px;">{sample_seg}</p>
-    <p style="color:#555;line-height:1.6;margin:0 0 16px;font-size:12px;">
+    <p style="color:#888;font-size:13px;margin:0 0 15px;">{sample_seg}</p>
+    <p style="color:#555;line-height:1.6;margin:0 0 20px;font-size:15px;">
       {custom_message}
     </p>
 
     <div style="background:{tmpl['color']}18;
                 border:2px dashed {tmpl['color']};
-                border-radius:10px;padding:16px;text-align:center;">
-      <div style="font-size:36px;font-weight:800;color:{tmpl['color']};">
+                border-radius:12px;padding:20px;text-align:center;">
+      <div style="font-size:44px;font-weight:800;color:{tmpl['color']};">
         {discount_pct}% OFF
       </div>
-      <div style="color:#888;font-size:11px;margin-top:5px;">
+      <div style="color:#888;font-size:13px;margin-top:8px;">
                 Valid from {promo_start.strftime('%d %b %Y')} to {valid_until.strftime('%d %b %Y')}
         &nbsp;·&nbsp; In-store &amp; online
       </div>
     </div>
 
-    <div style="text-align:center;margin-top:16px;">
+    <div style="text-align:center;margin-top:25px;">
       <div style="background:{tmpl['color']};color:#fff;
-                   padding:9px 24px;border-radius:7px;
-                   font-weight:700;font-size:13px;display:inline-block;">
+                   padding:12px 28px;border-radius:8px;
+                   font-weight:700;font-size:16px;display:inline-block;">
         Shop Now →
       </div>
     </div>
   </div>
 
-  <div style="background:#f8f9fa;padding:12px;text-align:center;
+  <div style="background:#f8f9fa;padding:15px;text-align:center;
               border-top:1px solid #eee;">
-    <p style="color:#aaa;font-size:9px;margin:0;">
+    <p style="color:#aaa;font-size:11px;margin:0;">
       Sunrise Super · Kundasale, Sri Lanka<br>
       You are receiving this as a loyalty member.
     </p>
@@ -367,7 +367,6 @@ def _build_preview(tmpl, campaign_name, custom_message,
 </div>
 </body></html>"""
     return preview_html
-
 
 # ── Main page ─────────────────────────────────────────────────────────────────
 def show_promotions():
@@ -526,7 +525,7 @@ def show_promotions():
 
         personalize_by_preference = st.toggle(
             "Personalize Email Message By Product Preference",
-            value=True,
+            value=False,
             help="Adds a tailored message paragraph based on each customer's taste profile."
         )
 
@@ -590,7 +589,7 @@ def show_promotions():
             sample_name    = sample_name,
             sample_seg     = sample_seg,
         )
-        components.html(preview, height=500, scrolling=False)
+        components.html(preview, height=695, scrolling=True)
 
         st.markdown("---")
 
