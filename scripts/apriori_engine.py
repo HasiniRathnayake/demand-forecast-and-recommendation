@@ -3,6 +3,7 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.db_connection import DatabaseConnection
 import pandas as pd
+from datetime import date, datetime, timedelta
 from mlxtend.frequent_patterns import apriori, association_rules
 from mlxtend.preprocessing import TransactionEncoder
 
@@ -34,7 +35,7 @@ class AprioriEngine:
         print(f"✅ Loaded {len(transactions)} transactions")
         return transactions
 
-    def run_apriori(self, transactions, min_support=0.01, min_confidence=0.1):
+    def run_apriori(self, transactions, min_support=0.02, min_confidence=0.20):
         """Run Apriori algorithm and return rules"""
         if not transactions:
             return None
@@ -61,7 +62,7 @@ class AprioriEngine:
 
         print(f"✅ Found {len(frequent_itemsets)} frequent itemsets")
 
-        # Generate association rules
+        # Generate association rules (notebook-aligned confidence threshold)
         rules = association_rules(
             frequent_itemsets,
             metric="confidence",
@@ -72,11 +73,20 @@ class AprioriEngine:
             print("⚠️ No rules generated — try lowering min_confidence")
             return None
 
+        # Notebook-aligned filters
+        rules = rules[(rules['lift'] >= 1.1) & (rules['support'] >= 0.01)]
+        rules['antecedent_len'] = rules['antecedents'].apply(len)
+        rules['consequent_len'] = rules['consequents'].apply(len)
+
         # Keep only single item → single item rules
         rules = rules[
-            rules['antecedents'].apply(lambda x: len(x) == 1) &
-            rules['consequents'].apply(lambda x: len(x) == 1)
+            (rules['antecedent_len'] == 1) &
+            (rules['consequent_len'] == 1)
         ].copy()
+
+        if rules.empty:
+            print("⚠️ Rules exist but none passed notebook filter constraints")
+            return None
 
         # Extract product codes
         rules['antecedent_code'] = rules['antecedents'].apply(
@@ -86,8 +96,15 @@ class AprioriEngine:
             lambda x: list(x)[0]
         )
 
-        # Sort by lift
-        rules = rules.sort_values('lift', ascending=False)
+        # Remove symmetric duplicates (A->B vs B->A) using canonical key
+        rules['rule_key'] = rules.apply(
+            lambda row: tuple(sorted([row['antecedent_code'], row['consequent_code']])),
+            axis=1,
+        )
+        rules = rules.drop_duplicates('rule_key')
+
+        # Notebook-aligned ranking
+        rules = rules.sort_values(['lift', 'confidence', 'support'], ascending=False)
 
         print(f"✅ Generated {len(rules)} association rules")
         print("\nTop 5 rules:")
@@ -124,11 +141,66 @@ class AprioriEngine:
 
         print(f"✅ Saved {saved} rules to database")
 
-    def get_recommendations(self, customer_id, top_n=6):
+    def _get_rules_health(self):
+        """Return (rule_count, last_updated_date) for association rules."""
+        row = self.db.fetch_one(
+            """
+            SELECT COUNT(*), MAX(last_updated)
+            FROM association_rules
+            """
+        )
+        if not row:
+            return 0, None
+
+        count = int(row[0] or 0)
+        last_updated = row[1]
+        if isinstance(last_updated, datetime):
+            last_updated = last_updated.date()
+        return count, last_updated
+
+    def refresh_rules_if_needed(self, max_age_days=7, min_rules=10):
+        """
+        Refresh association_rules when they are missing, too old, or too few.
+        Returns True if rules exist after the check (newly built or already healthy).
+        """
+        try:
+            rule_count, last_updated = self._get_rules_health()
+        except Exception:
+            return False
+
+        is_missing = rule_count == 0
+        is_too_few = rule_count < int(min_rules)
+        is_stale = False
+        if last_updated is not None:
+            is_stale = last_updated < (date.today() - timedelta(days=int(max_age_days)))
+
+        if not (is_missing or is_too_few or is_stale):
+            return True
+
+        reason = []
+        if is_missing:
+            reason.append("missing")
+        if is_too_few and not is_missing:
+            reason.append(f"too-few({rule_count})")
+        if is_stale:
+            reason.append(f"stale(last_updated={last_updated})")
+        print(f"🔄 Refreshing association rules: {', '.join(reason)}")
+
+        built = self.run()
+        if not built:
+            post_count, _ = self._get_rules_health()
+            return post_count > 0
+        return True
+
+    def get_recommendations(self, customer_id, top_n=6, auto_refresh=False):
         """
         Get product recommendations for a customer
         based on their purchase history + association rules
         """
+        if auto_refresh:
+            # Explicit refresh path only; keep dashboard reads fast and predictable.
+            self.refresh_rules_if_needed(max_age_days=7, min_rules=10)
+
         # Get products customer has bought
         bought = self.db.fetch_all("""
             SELECT DISTINCT ti.product_code
@@ -143,25 +215,39 @@ class AprioriEngine:
 
         bought_codes = [r[0] for r in bought]
 
-        # Find rules where antecedent is in bought products
+        # Find rules where antecedent is in bought products.
+        # Group by consequent product to avoid duplicate recommendations
+        # when multiple purchased items map to the same product.
         placeholders = ','.join(['%s'] * len(bought_codes))
         rules = self.db.fetch_all(f"""
             SELECT ar.consequent_product_code,
                    p.product_name, p.category,
                    p.unit_price,
                    COALESCE(p.offer_price, p.unit_price) as offer_price,
-                   ar.confidence, ar.lift
+                   MAX(ar.confidence) as confidence,
+                   MAX(ar.lift) as lift
             FROM association_rules ar
             JOIN product_catalog p ON ar.consequent_product_code = p.product_code
             WHERE ar.antecedent_product_code IN ({placeholders})
             AND ar.consequent_product_code NOT IN ({placeholders})
             AND p.is_ai_supported = TRUE
-            ORDER BY ar.lift DESC, ar.confidence DESC
+            GROUP BY ar.consequent_product_code,
+                     p.product_name, p.category,
+                     p.unit_price, p.offer_price
+            ORDER BY MAX(ar.lift) DESC, MAX(ar.confidence) DESC
             LIMIT %s
-        """, bought_codes + bought_codes + [top_n])
+        """, bought_codes + bought_codes + [max(top_n * 3, top_n)])
+
+        recommendations = []
+        seen_codes = set()
 
         if rules:
-            return [{
+            for r in rules:
+                code = r[0]
+                if code in seen_codes:
+                    continue
+                seen_codes.add(code)
+                recommendations.append({
                 'product_code':  r[0],
                 'product_name':  r[1],
                 'category':      r[2],
@@ -169,11 +255,27 @@ class AprioriEngine:
                 'offer_price':   float(r[4]),
                 'confidence':    float(r[5]),
                 'lift':          float(r[6]),
-                'reason':        'Frequently bought together'
-            } for r in rules]
+                'reason':        'Frequently bought together',
+                'source':        'association',
+            })
 
-        # Fallback to popular if no rules match
-        return self._get_popular_products(top_n)
+                if len(recommendations) >= top_n:
+                    break
+
+        # Top up with fallback products when personalized results are fewer than requested.
+        if len(recommendations) < top_n:
+            popular_needed = top_n - len(recommendations)
+            popular = self._get_popular_products(max(popular_needed * 2, popular_needed))
+            for p in popular:
+                if p['product_code'] in seen_codes:
+                    continue
+                p['source'] = 'popular'
+                recommendations.append(p)
+                seen_codes.add(p['product_code'])
+                if len(recommendations) >= top_n:
+                    break
+
+        return recommendations[:top_n]
 
     def _get_popular_products(self, top_n=6):
         """Fallback: return most popular products"""
@@ -214,8 +316,8 @@ class AprioriEngine:
         # Try with low support since we have small dataset
         rules = self.run_apriori(
             transactions,
-            min_support=0.01,
-            min_confidence=0.05
+            min_support=0.02,
+            min_confidence=0.20
         )
 
         if rules is not None:
