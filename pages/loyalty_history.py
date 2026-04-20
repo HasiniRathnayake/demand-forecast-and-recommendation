@@ -97,24 +97,24 @@ def show_email_history():
         status_filter = st.selectbox("Filter by status", ["All", "Sent", "Failed", "Scheduled"])
 
     # ── VALIDATION FOR FILTERS ──────────────────────────
-    filter_errors = []
-    
-    if search and len(search) > 100:
-        filter_errors.append("❌ Search term cannot exceed 100 characters")
-    if search and len(search) < 2:
-        filter_errors.append("ℹ️ Search term must be at least 2 characters to filter")
+    search = (search or "").strip()
+    if len(search) > 100:
+        st.warning("Search term cannot exceed 100 characters. Showing first 100 characters.")
+        search = search[:100]
+
+    # Do not stop rendering the table for short input; simply ignore filtering.
+    if 0 < len(search) < 2:
+        st.info("Type at least 2 characters to filter by customer or email.")
+        search = ""
+
     if status_filter not in ["All", "Sent", "Failed", "Scheduled"]:
-        filter_errors.append("❌ Invalid status filter selected")
-    
-    if filter_errors:
-        for error in filter_errors:
-            st.warning(error)
-        st.stop()
+        st.warning("Invalid status filter selected. Resetting to All.")
+        status_filter = "All"
 
     logs = db.fetch_all("""
         SELECT el.email_log_id,
-               c.first_name,
-               c.email,
+               COALESCE(c.first_name, 'Unknown Customer') as first_name,
+               COALESCE(c.email, '-') as email,
                el.email_type,
                el.subject,
                TO_CHAR(el.sent_date, 'DD Mon YYYY HH24:MI') as sent,
@@ -122,7 +122,7 @@ def show_email_history():
                el.opened,
                el.clicked
         FROM email_log el
-        JOIN customers c ON el.customer_id = c.customer_id
+        LEFT JOIN customers c ON el.customer_id = c.customer_id
         ORDER BY el.sent_date DESC
         LIMIT 200
     """)
@@ -145,7 +145,7 @@ def show_email_history():
     # Apply filters
     original_count = len(df)
     
-    if search and len(search.strip()) > 0:
+    if search:
         df = df[
             df['Customer'].str.contains(search, case=False, na=False) |
             df['Email'].str.contains(search, case=False, na=False)
