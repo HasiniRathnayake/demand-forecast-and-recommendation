@@ -1,8 +1,3 @@
-code .gitignore
-```
-
-You'll see conflict markers. Replace everything with this clean version:
-```
 .env
 venv/
 venv311/
@@ -27,3 +22,6 @@ ml_training/outputs/
 ml_training/requirements_m*.txt
 test_model.py
 test_model_new.py
+VIVA_SCRIPTS.md
+LOYALTY_PIPELINE_DIAGRAM.md
+VIVA_SCRIPTS.md
