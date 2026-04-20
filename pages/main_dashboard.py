@@ -7,7 +7,7 @@ Staff see all module cards. Customers see loyalty view.
 
 from __future__ import annotations
 import streamlit as st
-from ui.styles import inject_styles
+from ui.styles import inject_styles, render_page_heading
 from services.auth_service import require_auth, get_current_user, get_user_role, logout
 def render_main_dashboard() -> None:
     inject_styles()
@@ -26,20 +26,13 @@ def render_main_dashboard() -> None:
     # ── Top nav ────────────────────────────────────────────────────────────────
     col_title, col_spacer, col_user, col_logout = st.columns([4, 2, 1, 1])
     with col_title:
-        st.markdown(
-            '<p class="main-header" style="margin-bottom:0">🛒 Sunrise Supermarket</p>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<p class="sub-header" style="margin-top:0">AI Management System</p>',
-            unsafe_allow_html=True,
-        )
+        render_page_heading("AI Management System")
     with col_user:
         role_color = {"admin": "#DC2626", "staff": "#059669", "customer": "#2563EB", "supplier": "#7C3AED"}.get(role, "#64748B")
         st.markdown(
             f'<div style="text-align:right;padding-top:.5rem">'
-            f'<div style="font-weight:600">👤 {username}</div>'
-            f'<div style="font-size:.75rem;color:{role_color};font-weight:600">'
+            f'<div style="font-weight:600;font-size:1.02rem">👤 {username}</div>'
+            f'<div style="font-size:.95rem;color:{role_color};font-weight:700">'
             f'{role.upper()}</div></div>',
             unsafe_allow_html=True,
         )
@@ -124,13 +117,10 @@ def render_main_dashboard() -> None:
             with cols[i % 3]:
                 st.markdown(
                     f"""
-                    <div class="metric-card" style="min-height:170px;
-                         border-left:4px solid {mod['color']};margin-bottom:.75rem">
-                        <div style="font-size:1.8rem">{mod['icon']}</div>
-                        <div style="font-weight:700;font-size:.95rem;
-                             margin:.35rem 0 .2rem">{mod['title']}</div>
-                        <div style="font-size:.78rem;color:var(--text-muted,#888);
-                             line-height:1.4">{mod['desc']}</div>
+                    <div class="metric-card dashboard-card" style="border-left:4px solid {mod['color']};">
+                        <div class="dashboard-card-icon">{mod['icon']}</div>
+                        <div class="dashboard-card-title">{mod['title']}</div>
+                        <div class="dashboard-card-desc">{mod['desc']}</div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -168,10 +158,10 @@ def render_main_dashboard() -> None:
         st.markdown("")
         st.markdown(
             """
-            <div class="metric-card" style="min-height:170px;border-left:4px solid #7C3AED;max-width:520px;">
-                <div style="font-size:1.8rem">📨</div>
-                <div style="font-weight:700;font-size:.95rem;margin:.35rem 0 .2rem">Supplier Dashboard</div>
-                <div style="font-size:.78rem;color:var(--text-muted,#888);line-height:1.4">
+            <div class="metric-card dashboard-card" style="border-left:4px solid #7C3AED;max-width:520px;">
+                <div class="dashboard-card-icon">📨</div>
+                <div class="dashboard-card-title">Supplier Dashboard</div>
+                <div class="dashboard-card-desc">
                     View your purchase orders, notes, and mark orders as sent to delivery.
                 </div>
             </div>

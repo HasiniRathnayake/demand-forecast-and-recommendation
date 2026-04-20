@@ -581,13 +581,12 @@ def show_customer_dashboard(customer_id):
                     "Validity available in email details"
                 )
                 st.markdown(
-                    f'<div class="metric-card" style="margin-bottom:8px;'
-                    f'padding:12px 16px;">'
-                    f'<div style="font-weight:600;font-size:14px;">'
+                    f'<div class="metric-card" style="margin-bottom:8px;padding:12px 16px;">'
+                    f'<div class="dashboard-card-title">'
                     f'{subject}</div>'
-                    f'<div style="font-size:12px;color:var(--text-muted);">'
+                    f'<div class="card-meta">'
                     f'Received: {date_str}</div>'
-                    f'<div style="font-size:12px;color:var(--text-muted);">'
+                    f'<div class="card-meta">'
                     f'{validity}</div>'
                     f'</div>',
                     unsafe_allow_html=True
@@ -619,17 +618,16 @@ def show_customer_dashboard(customer_id):
                     f'<div class="metric-card" style="margin-bottom:10px;padding:12px 16px;">'
                     f'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">'
                     f'<div>'
-                    f'<div style="font-weight:700;font-size:14px;">{item["product_name"]}</div>'
-                    f'<div style="font-size:12px;color:var(--text-muted);">{item["category"]}</div>'
+                    f'<div class="dashboard-card-title">{item["product_name"]}</div>'
+                    f'<div class="card-meta">{item["category"]}</div>'
                     f'</div>'
-                    f'<div style="font-size:11px;color:{badge_color};background:{badge_bg};'
-                    f'padding:3px 8px;border-radius:999px;font-weight:700;">{item["status"]}</div>'
+                    f'<div class="card-chip" style="color:{badge_color};background:{badge_bg};">{item["status"]}</div>'
                     f'</div>'
-                    f'<div style="font-size:12px;color:var(--text-muted);margin-top:8px;">'
+                    f'<div class="card-meta" style="margin-top:8px;">'
                     f'{due_label} · Last bought {item["days_since_last"]} day(s) ago</div>'
-                    f'<div style="font-size:12px;color:var(--text-muted);">'
+                    f'<div class="card-note">'
                     f'Flag source: {"prepared CSV" if is_csv_alert else "live purchase history"}</div>'
-                    f'<div style="font-size:12px;color:var(--text-muted);">'
+                    f'<div class="card-note">'
                     f'Why: You usually rebuy this every ~{item["avg_gap_days"]} day(s).</div>'
                     f'</div>',
                     unsafe_allow_html=True,
@@ -696,27 +694,21 @@ def show_customer_dashboard(customer_id):
 
                 with cols[i % 3]:
                     saving_html = (
-                        f'<div style="background:#d1fae5;color:#065f46;'
-                        f'border-radius:4px;padding:2px 8px;'
-                        f'font-size:11px;margin-top:4px;">'
+                        f'<div class="card-highlight" style="background:#d1fae5;color:#065f46;margin-top:4px;">'
                         f'Save Rs.{saving:.2f}</div>'
                         if saving > 0 else ''
                     )
                     conf_html = (
-                        f'<div style="font-size:10px;color:var(--text-muted);'
-                        f'margin-top:4px;">'
+                        f'<div class="card-note" style="margin-top:4px;">'
                         f'🤖 {confidence*100:.0f}% match</div>'
                         if confidence > 0 else
-                        f'<div style="font-size:10px;color:var(--text-muted);'
-                        f'margin-top:4px;">⭐ {reason}</div>'
+                        f'<div class="card-note" style="margin-top:4px;">⭐ {reason}</div>'
                     )
                     source_badge = (
-                        '<div style="font-size:10px;color:#065f46;background:#d1fae5;'
-                        'display:inline-block;padding:2px 6px;border-radius:999px;margin-bottom:8px;">'
+                        '<div class="card-chip" style="color:#065f46;background:#d1fae5;margin-bottom:8px;">'
                         'Pattern-based</div>'
                         if source == 'association' else
-                        '<div style="font-size:10px;color:#92400e;background:#fef3c7;'
-                        'display:inline-block;padding:2px 6px;border-radius:999px;margin-bottom:8px;">'
+                        '<div class="card-chip" style="color:#92400e;background:#fef3c7;margin-bottom:8px;">'
                         'Popular fallback</div>'
                     )
                     st.markdown(
@@ -724,17 +716,12 @@ def show_customer_dashboard(customer_id):
                         f'padding:16px;margin-bottom:12px;">'
                         f'{source_badge}'
                         f'<div style="font-size:26px;margin-bottom:8px;">🛒</div>'
-                        f'<div style="font-weight:700;font-size:13px;'
-                        f'margin-bottom:3px;">{rec["product_name"]}</div>'
-                        f'<div style="font-size:11px;color:var(--text-muted);'
-                        f'margin-bottom:8px;">{rec["category"]}</div>'
-                        f'<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">'
+                        f'<div class="dashboard-card-title" style="margin-bottom:3px;">{rec["product_name"]}</div>'
+                        f'<div class="card-meta" style="margin-bottom:8px;">{rec["category"]}</div>'
+                        f'<div class="card-note" style="margin-bottom:8px;">'
                         f'Why: {why_text}</div>'
-                        f'<div style="text-decoration:line-through;'
-                        f'color:var(--text-muted);font-size:12px;">'
-                        f'Rs.{unit_price:.2f}</div>'
-                        f'<div style="color:#059669;font-weight:800;'
-                        f'font-size:16px;">Rs.{offer_price:.2f}</div>'
+                        f'<div class="card-price-old">Rs.{unit_price:.2f}</div>'
+                        f'<div class="card-price-new">Rs.{offer_price:.2f}</div>'
                         f'{saving_html}{conf_html}'
                         f'</div>',
                         unsafe_allow_html=True
@@ -857,9 +844,8 @@ def show_customer_dashboard(customer_id):
         with col_info:
             st.markdown(
                 f'<div class="metric-card">'
-                f'<div style="font-weight:700;font-size:15px;'
-                f'margin-bottom:14px;">Account Details</div>'
-                f'<div style="font-size:14px;line-height:2.2;">'
+                f'<div class="dashboard-card-title" style="margin-bottom:14px;">Account Details</div>'
+                f'<div class="card-meta" style="line-height:2.2;">'
                 f'👤 <strong>{full_name}</strong><br>'
                 f'📧 {email}<br>'
                 f'🆔 {customer_id}<br>'
@@ -873,12 +859,10 @@ def show_customer_dashboard(customer_id):
             st.markdown(
                 f'<div class="metric-card" '
                 f'style="border-top:4px solid {seg_color};">'
-                f'<div style="font-weight:700;font-size:15px;'
-                f'margin-bottom:14px;">Membership Tier</div>'
-                f'<div style="font-size:24px;font-weight:800;'
+                f'<div class="dashboard-card-title" style="margin-bottom:14px;">Membership Tier</div>'
+                f'<div style="font-size:1.7rem;font-weight:800;'
                 f'color:{seg_color};">{seg_friendly}</div>'
-                f'<div style="font-size:13px;color:var(--text-muted);'
-                f'margin-top:10px;line-height:1.8;">'
+                f'<div class="card-meta" style="margin-top:10px;line-height:1.8;">'
                 f'Total spent: <strong>Rs.{total_rev:,.2f}</strong><br>'
                 f'Purchases: <strong>{tx_count}</strong></div>'
                 f'</div>',

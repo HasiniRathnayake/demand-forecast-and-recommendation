@@ -9,6 +9,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from ui.styles import render_page_heading
 from utils.database   import fetch_ai_performance, fetch_demand_forecasts, upsert_ai_comparison
 from utils.helpers    import calculate_accuracy_metrics, fmt_date, fmt_datetime, fmt_pct, fmt_signed
 from utils.validators import validate_actual_sales
@@ -33,7 +34,7 @@ div[data-testid="stForm"] div.stButton > button:hover {
     ai_df         = fetch_ai_performance(start, end)
 
     # ── Add Comparison Form ───────────────────────────────────────────────────
-    st.markdown("<h1 style='font-size:3.5rem;font-weight:900;letter-spacing:-1px;'> Actual vs Predicted Comparison</h1>", unsafe_allow_html=True)
+    render_page_heading("Actual vs Predicted Comparison")
 
     if all_forecasts.empty:
         st.warning("No demand forecasts found. Please generate forecasts in the Demand Forecast module first.")
@@ -153,7 +154,7 @@ div[data-testid="stForm"] div.stButton > button:hover {
 def show_ai_performance_analytics(start: date, end: date) -> None:
     ai_df = fetch_ai_performance(start, end)
 
-    st.markdown("<h1 style='font-size:3.5rem;font-weight:900;letter-spacing:-1px;'>AI Performance Analytics</h1>", unsafe_allow_html=True)
+    render_page_heading("AI Performance Analytics")
     st.divider()
 
     if ai_df.empty:

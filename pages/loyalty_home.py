@@ -3,6 +3,7 @@ import streamlit as st
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from scripts.db_connection import DatabaseConnection
+from ui.styles import render_page_heading
 import plotly.express as px
 import pandas as pd
 
@@ -58,8 +59,7 @@ def _normalize_taste_label(raw_label):
     return str(raw_label).strip()
 
 def show_home():
-    st.title("🏠 Dashboard Overview")
-    st.markdown("Welcome to the **Sunrise Super Loyalty Manager**")
+    render_page_heading("Dashboard Overview")
     st.divider()
 
     db = DatabaseConnection()

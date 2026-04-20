@@ -6,7 +6,7 @@ import re
 from datetime import datetime, timezone, timedelta
 
 from config.settings import SUPABASE_URL, SUPABASE_KEY
-from ui.styles import inject_styles
+from ui.styles import inject_styles, render_page_heading
 from pages.stock_replenishment_helpers import (
     _commit_override,
     delete_purchase_order,
@@ -54,6 +54,9 @@ def render_stock_replenishment():
         .stock-ok { color: #10b981; }
         </style>
     """, unsafe_allow_html=True)
+
+    render_page_heading("Stock Replenishment")
+    st.markdown("---")
 
     with st.spinner("Loading ML pipeline and database records..."):
         orders = fetch_orders()
