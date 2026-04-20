@@ -2,6 +2,7 @@
 import smtplib
 import os
 import sys
+import html
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
@@ -28,6 +29,8 @@ class EmailSender:
         discount_pct = offer['discount_pct']
         promo_start  = offer.get('promo_start')
         promo_end    = offer.get('promo_end')
+        taste_pref   = (offer.get('taste_preference') or '').strip()
+        campaign_message = (offer.get('campaign_message') or '').strip()
         friendly_segments = {
             'VIP Customer':     'VIP Member',
             'High Value':       'Valued Member',
@@ -39,6 +42,15 @@ class EmailSender:
         }
         segment = friendly_segments.get(offer['segment'], 'Loyalty Member')
         recommended  = offer['recommended']
+        intro_message = campaign_message or (
+            f"As a valued {segment} member, we have an exclusive offer just for you:"
+        )
+        intro_message_html = html.escape(intro_message).replace('\n', '<br>')
+        taste_pref_html = (
+            f"<p style=\"margin:0 0 14px;color:#16a085;font-size:13px;\">"
+            f"Taste Profile: <strong>{html.escape(taste_pref)}</strong></p>"
+            if taste_pref else ""
+        )
         validity_line = (
             f"Use at checkout — valid from {promo_start} to {promo_end}"
             if promo_start and promo_end else
@@ -50,11 +62,12 @@ class EmailSender:
         for p in recommended:
             saving = round(p['unit_price'] - p['offer_price'], 2)
             saving_html = f"<span style='color:#e74c3c;'>Save Rs.{saving:.2f}</span>" if saving > 0 else ""
+            reason = p.get('reason', 'Recommended for you')
             product_rows += f"""
             <tr>
                 <td style="padding:10px;border-bottom:1px solid #eee;">
                     <strong>{p['product_name']}</strong><br>
-                    <small style="color:#888;">{p['category']}</small>
+                    <small style="color:#888;">{p['category']} • <em>{reason}</em></small>
                 </td>
                 <td style="padding:10px;border-bottom:1px solid #eee;text-align:center;">
                     <span style="text-decoration:line-through;color:#aaa;">Rs.{p['unit_price']:.2f}</span><br>
@@ -64,7 +77,7 @@ class EmailSender:
             </tr>
             """
 
-        html = f"""
+        html_body = f"""
         <html>
         <body style="font-family:Arial,sans-serif;background:#f5f5f5;margin:0;padding:20px;">
             <div style="max-width:600px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 2px 10px rgba(0,0,0,0.1);">
@@ -79,8 +92,9 @@ class EmailSender:
                 <div style="padding:30px;">
                     <h2 style="color:#2c3e50;">Hi {name}! 👋</h2>
                     <p style="color:#555;font-size:16px;">
-                        As a valued <strong>{segment}</strong> member, we have an exclusive offer just for you:
+                        {intro_message_html}
                     </p>
+                    {taste_pref_html}
 
                     <!-- Offer Badge -->
                     <div style="background:#fff3cd;border:2px dashed #f39c12;border-radius:10px;padding:20px;text-align:center;margin:20px 0;">
@@ -116,7 +130,7 @@ class EmailSender:
         </body>
         </html>
         """
-        return html
+        return html_body
 
     def send_email(self, to_email, subject, html_content):
         """Send a single email"""
@@ -446,15 +460,42 @@ class EmailSender:
         results = []
 
         # Open ONE connection for all emails instead of one per email
+        server = None
         try:
             server = smtplib.SMTP(self.smtp_host, self.smtp_port)
             server.starttls()
             server.login(self.email_user, self.email_pass)
         except Exception as e:
+            for offer in offers:
+                if not offer.get('email_enabled') or not offer.get('promo_allowed'):
+                    skipped += 1
+                    results.append({
+                        'name':   offer['customer_name'],
+                        'email':  offer['email'],
+                        'status': 'skipped',
+                        'reason': 'Email notifications disabled'
+                    })
+                    continue
+
+                subject = f"🎉 {offer['offer_text']} — Sunrise Super"
+                html_content = self.build_email_html(offer)
+                self.log_email(
+                    offer['customer_id'], 'promotional',
+                    subject, html_content, False,
+                    segment=offer.get('segment')
+                )
+                failed += 1
+                results.append({
+                    'name':   offer['customer_name'],
+                    'email':  offer['email'],
+                    'status': 'failed',
+                    'reason': str(e)
+                })
             return {
-                'sent': 0, 'skipped': 0, 'failed': len(offers),
-                'results': [{'name': 'All', 'email': '-',
-                             'status': 'failed', 'reason': str(e)}]
+                'sent':    0,
+                'skipped': skipped,
+                'failed':  failed,
+                'results': results,
             }
 
         for offer in offers:
@@ -506,7 +547,8 @@ class EmailSender:
                     'reason': str(e)
                 })
 
-        server.quit()
+        if server is not None:
+            server.quit()
 
         return {
             'sent':    sent,
