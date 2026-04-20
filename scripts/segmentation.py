@@ -301,13 +301,23 @@ class CustomerSegmentation:
     # MAIN PIPELINE
     # =========================================================================
 
-    def run(self) -> list:
+    def run(self, mode: str | None = None) -> list:
         """
         Syncs all active customers to customer_segment_assignment.
         - Uses K-Means loyalty clustering (mirrors notebook exactly)
         - New customers (tx_count == 0) always get New Customer (segment 6)
         - Taste clustering runs for product_preference
+        - ``mode`` is accepted for backward compatibility with older callers
         """
+        if mode not in (None, "rfm", "taste"):
+            raise ValueError("mode must be one of: None, 'rfm', 'taste'")
+
+        if mode in ("rfm", "taste"):
+            print(
+                f"Note: segmentation mode '{mode}' is accepted for compatibility; "
+                "the current pipeline syncs both loyalty and taste assignments."
+            )
+
         print("=" * 60)
         print("SUNRISE SUPERMARKET — SEGMENTATION SYNC")
         print("=" * 60)
@@ -372,6 +382,10 @@ class CustomerSegmentation:
         print(f"COMPLETE — {len(results)} customers synced.")
         print(f"{'='*60}")
         return results
+
+    def cluster_by_taste_preferences(self) -> list:
+        """Backward-compatible alias used by older test and UI code."""
+        return self.run(mode="taste")
 
 
 # ── CLI entry point ───────────────────────────────────────────
