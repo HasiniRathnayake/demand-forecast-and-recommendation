@@ -13,6 +13,7 @@ Roles:
 
 from __future__ import annotations
 import bcrypt
+import re
 import streamlit as st
 from datetime import datetime
 from data.db_client import get_client
@@ -93,6 +94,88 @@ def validate_login_inputs(username: str, password: str) -> list[str]:
     return errors
 
 
+def _resolve_customer_id(client, email: str) -> str | None:
+    """Find the matching customer profile for an email address."""
+    if not email:
+        return None
+    try:
+        response = (
+            client.table("customers")
+            .select("customer_id")
+            .ilike("email", email.strip().lower())
+            .limit(1)
+            .execute()
+        )
+    except Exception:
+        return None
+
+    if not response.data:
+        return None
+    return response.data[0].get("customer_id")
+
+
+def _generate_customer_id(client) -> str:
+    """Generate the next CUST-prefixed customer ID."""
+    highest = 0
+    try:
+        rows = client.table("customers").select("customer_id").execute().data or []
+    except Exception:
+        rows = []
+
+    for row in rows:
+        raw_customer_id = str(row.get("customer_id") or "").strip()
+        match = re.match(r"^CUST(\d+)$", raw_customer_id, flags=re.IGNORECASE)
+        if match:
+            highest = max(highest, int(match.group(1)))
+
+    return f"CUST{highest + 1:04d}"
+
+
+def _create_customer_profile(client, username: str, email: str) -> str | None:
+    """Create a customer record for a newly registered customer account if needed."""
+    existing_customer_id = _resolve_customer_id(client, email)
+    if existing_customer_id:
+        return existing_customer_id
+
+    username_clean = (username or "").strip()
+    email_clean = (email or "").strip().lower()
+    customer_id = _generate_customer_id(client)
+
+    payload_variants = [
+        {
+            "customer_id": customer_id,
+            "first_name": username_clean,
+            "email": email_clean,
+            "is_active": True,
+            "email_notification_enabled": True,
+            "promotional_emails_allowed": True,
+            "join_date": datetime.now().date().isoformat(),
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+        },
+        {
+            "customer_id": customer_id,
+            "first_name": username_clean,
+            "email": email_clean,
+        },
+        {
+            "customer_id": customer_id,
+            "email": email_clean,
+        },
+    ]
+
+    for payload in payload_variants:
+        try:
+            client.table("customers").insert(payload).execute()
+            resolved = _resolve_customer_id(client, email_clean)
+            if resolved:
+                return resolved
+        except Exception:
+            continue
+
+    return customer_id
+
+
 # ── Database operations ────────────────────────────────────────────────────────
 
 def register_user(
@@ -160,6 +243,25 @@ def register_user(
                     "Note: users.supplier_id is missing in DB; supplier linking will use email."
                 )
             raise
+
+        if role == "customer":
+            try:
+                created_user = (
+                    client.table("users")
+                    .select("user_id")
+                    .eq("username", username.strip().lower())
+                    .limit(1)
+                    .execute()
+                )
+                user_id = created_user.data[0].get("user_id") if created_user.data else None
+                customer_id = _create_customer_profile(client, username, email)
+                if customer_id and user_id is not None:
+                    try:
+                        client.table("users").update({"customer_id": customer_id}).eq("user_id", user_id).execute()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         # Staff accounts must be approved by admin before first login.
         if role == "staff":
@@ -280,6 +382,18 @@ def login_user(username: str, password: str) -> tuple[bool, str, dict | None]:
                         user["supplier_id"] = supplier_match.data[0].get("supplier_id")
                 except Exception:
                     pass
+
+        if user.get("role") == "customer" and not user.get("customer_id"):
+            try:
+                customer_id = _resolve_customer_id(client, user.get("email", ""))
+                if customer_id:
+                    user["customer_id"] = customer_id
+                    try:
+                        client.table("users").update({"customer_id": customer_id}).eq("user_id", user.get("user_id")).execute()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         # Remove hash before storing in session
         user_safe = {k: v for k, v in user.items() if k != "password_hash"}
