@@ -16,12 +16,14 @@ HEADERS = {
 }
 
 
+@st.cache_data(ttl=1800)
 def fetch_orders():
     url = f"{SUPABASE_URL}/rest/v1/demand_forecasts?select=*&order=forecast_date.desc&limit=1000"
     resp = requests.get(url, headers=HEADERS)
     return resp.json() if resp.status_code == 200 else []
 
 
+@st.cache_data(ttl=3600)
 def fetch_products():
     url = f"{SUPABASE_URL}/rest/v1/product_catalog?select=product_code,product_name"
     resp = requests.get(url, headers=HEADERS)
@@ -62,6 +64,7 @@ def fetch_latest_forecasts(product_codes):
     return latest_map
 
 
+@st.cache_data(ttl=1800)
 def fetch_forecast_dates():
     url = f"{SUPABASE_URL}/rest/v1/demand_forecasts?select=forecast_date&order=forecast_date.desc&limit=5000"
     resp = requests.get(url, headers=HEADERS)
@@ -104,18 +107,21 @@ def fetch_forecasts_for_date(product_codes, forecast_date):
     return latest_map
 
 
+@st.cache_data(ttl=300)
 def fetch_suppliers():
     url = f"{SUPABASE_URL}/rest/v1/suppliers?select=*&order=supplier_name.asc"
     resp = requests.get(url, headers=HEADERS)
     return resp.json() if resp.status_code == 200 else []
 
 
+@st.cache_data(ttl=60)
 def fetch_purchase_orders():
     url = f"{SUPABASE_URL}/rest/v1/purchase_orders?select=*,suppliers(supplier_name,email),replenishment_orders(product_code,suggested_qty)&order=created_at.desc"
     resp = requests.get(url, headers=HEADERS)
     return resp.json() if resp.status_code == 200 else []
 
 
+@st.cache_data(ttl=300)
 def fetch_product_supplier_map():
     """Infer default supplier per product from historical purchase orders."""
     url = (
@@ -144,6 +150,7 @@ def fetch_product_supplier_map():
     return product_supplier
 
 
+@st.cache_data(ttl=300)
 def fetch_supplier_product_map():
     """Return supplier_id -> [product_code] from supplier_product_map table."""
     url = (
@@ -167,6 +174,7 @@ def fetch_supplier_product_map():
     return mapping
 
 
+@st.cache_data(ttl=60)
 def fetch_approval_logs(limit=100):
     url = (
         f"{SUPABASE_URL}/rest/v1/override_logs"
@@ -177,6 +185,7 @@ def fetch_approval_logs(limit=100):
     return resp.json() if resp.status_code == 200 else []
 
 
+@st.cache_data(ttl=1)
 def fetch_replenishment_status(order_ids):
     if not order_ids:
         return {}
@@ -296,6 +305,8 @@ def update_order_status(order_id, status, supplier_id=None, final_qty=None, orde
                         detail = po_resp.text.strip()
                         st.error(f"Failed to create purchase order ({po_resp.status_code}). {detail}")
                         return False
+        fetch_replenishment_status.clear()
+        fetch_purchase_orders.clear()
         st.toast(f"Order {order_id} marked as {status}!", icon="✅")
         return True
 
@@ -322,13 +333,15 @@ def save_override_log(order_id, code, predicted, ordered, reason, anomaly_flag):
             patch_headers = {**HEADERS, "Prefer": "return=minimal"}
             patch_resp = requests.patch(patch_url, headers=patch_headers, json=payload)
             if patch_resp.status_code in [200, 204]:
+                fetch_approval_logs.clear()
                 return True
 
         detail = resp.text.strip()
         st.error(f"Failed to save approval log. ({resp.status_code}) {detail}")
         return False
+        
+    fetch_approval_logs.clear()
     return True
-
 
 def _commit_override(order_id, code, predicted, ordered, supplier_id, reason, order_context):
     ensured = ensure_replenishment_row(order_context or {}, predicted)
@@ -399,6 +412,7 @@ def update_po_status(po_id, status, do_rerun=True):
     if resp.status_code not in [200, 204]:
         st.error(f"Failed to update PO status to {status}.")
         return False
+    fetch_purchase_orders.clear()
     if do_rerun:
         st.rerun()
     return True
@@ -504,6 +518,8 @@ def delete_purchase_order(po_id, rep_order_id):
         req_headers = {**HEADERS, "Prefer": "return=minimal"}
         requests.patch(url_rep, headers=req_headers, json={"status": "CANCELLED"})
 
+    fetch_purchase_orders.clear()
+    fetch_replenishment_status.clear()
     st.toast("Order successfully canceled!", icon="🛑")
     st.rerun()
 
@@ -552,8 +568,8 @@ def save_supplier(supplier_id, name, email, phone, selected_products=None):
 
     action = "created" if created else "updated"
     mapped_count = len(selected_products or [])
+    fetch_suppliers.clear()
     return True, f"Supplier {supplier_id} {action} successfully. Products mapped: {mapped_count}."
-
 
 def _save_supplier_products(supplier_id, product_codes):
     """Replace product mappings for a supplier in supplier_product_map."""
@@ -581,12 +597,13 @@ def _save_supplier_products(supplier_id, product_codes):
     if post_resp.status_code not in [200, 201, 204]:
         detail = post_resp.text.strip()
         return False, f"Failed to save product mappings ({post_resp.status_code}). {detail}"
-
+        
+    fetch_supplier_product_map.clear()
     return True, ""
-
 
 def delete_supplier(supplier_id):
     url = f"{SUPABASE_URL}/rest/v1/suppliers?supplier_id=eq.{supplier_id}"
     requests.delete(url, headers=HEADERS)
+    fetch_suppliers.clear()
     st.toast("Supplier removed!", icon="🗑️")
     st.rerun()
