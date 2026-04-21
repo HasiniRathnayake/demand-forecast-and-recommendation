@@ -123,11 +123,10 @@ def render_stock_replenishment():
                 )
 
     # Main Tabs
-    tab_dash, tab_po, tab_sup, tab_shrink = st.tabs([
+    tab_dash, tab_po, tab_sup = st.tabs([
         "📊 ML Dashboard & Approvals",
         "📦 Purchase Orders (Auto-POs)",
         "🏢 Supplier Directory",
-        "📉 Shrinkage Analysis",
     ])
 
     # ─────────────────────────────────────────────────────────────────
@@ -669,19 +668,5 @@ def render_stock_replenishment():
             st.info("No suppliers exist in the database.")
 
     # ─────────────────────────────────────────────────────────────────
-    # ─────────────────────────────────────────────────────────────────
-    # TAB 5: Shrinkage Analysis (Inventory Intake Dashboard)
-    # ─────────────────────────────────────────────────────────────────
-    with tab_shrink:
-        st.markdown("#### 📉 Shrinkage Analysis")
-        st.caption("Inventory intake analytics view only (workflow form hidden).")
-
-        try:
-            from pages.inventory_intake_page import render_shrinkage_analytics_only
-
-            render_shrinkage_analytics_only()
-        except Exception as exc:
-            st.error(f"Unable to load Inventory Intake dashboard: {exc}")
-
     # Direct-send flow is used in Purchase Orders tab; preview modal removed.
 
