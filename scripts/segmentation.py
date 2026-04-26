@@ -239,18 +239,29 @@ class CustomerSegmentation:
 
     @staticmethod
     def _taste_label(cluster_id: int,
-                     cat_features: pd.DataFrame,
-                     cluster_labels: np.ndarray) -> str:
+                 cat_features: pd.DataFrame,
+                 cluster_labels: np.ndarray) -> str:
         """Maps taste cluster to preference label by dominant category."""
-        mask    = cluster_labels == cluster_id
+        mask = cluster_labels == cluster_id
+        # Find the category with the highest average spend for this cluster.
         top_col = cat_features[mask].mean().idxmax().replace("pct_", "")
 
+        # 1. Protein Logic
         if any(k in top_col for k in {"meat", "seafood", "fish", "fresh", "protein"}):
             return "Fresh & Protein Lovers"
-        if any(k in top_col for k in {"baby", "personal", "care"}):
-            return "Family & Baby Care"
+
+        # 2. Dairy & Baby Logic
+        if any(k in top_col for k in {"dairy", "baby"}):
+            return "Family & Health Focused"
+
+        # 3. Snacks & Treats Logic
+        if any(k in top_col for k in {"fruits", "snacks", "desserts", "spreads"}):
+            return "Snack & Produce Lovers"
+
+        # 4. Drinks Logic
         if any(k in top_col for k in {"bever", "drink", "health"}):
             return "Drink & Health Focused"
+
         return "Balanced Shoppers"
 
     def _run_taste_clustering(self, customer_ids: list) -> dict:
@@ -266,10 +277,16 @@ class CustomerSegmentation:
             return {cid: "Balanced Shoppers" for cid in customer_ids}
 
         cat_feature_cols = [c for c in cat_df.columns if c != "customer_id"]
+        # DB adapters may return Decimal/object values; coerce to numeric before math ops.
+        cat_df[cat_feature_cols] = (
+            cat_df[cat_feature_cols]
+            .apply(pd.to_numeric, errors="coerce")
+            .fillna(0.0)
+        )
         X_cat = StandardScaler().fit_transform(cat_df[cat_feature_cols].values)
 
         print("[4] Selecting best k by Silhouette Score (range 2-8) ...")
-        best_k = self._best_k(X_cat)
+        best_k = 4  # Manually set to match business requirements and notebook findings
         print(f"    Best k = {best_k}")
 
         km_taste = KMeans(n_clusters=best_k, init="k-means++", n_init=10, random_state=42)

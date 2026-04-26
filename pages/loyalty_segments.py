@@ -19,14 +19,17 @@ SEGMENT_COLORS = {
     # Taste preferences
     '🥦 balanced shoppers': '#27ae60',
     '🐟 fresh & protein lovers': '#e67e22',
-    '👶 family & baby care': '#9b59b6',
+    '👨‍👩‍👧 family & health focused': '#9b59b6',
+    '🍿 snack & produce lovers': '#d35400',
     '🥤 drink & health focused': '#3498db',
 }
 
 TASTE_LABELS = {
     'balanced shoppers': '🥦 balanced shoppers',
     'fresh & protein lovers': '🐟 fresh & protein lovers',
-    'family & baby care': '👶 family & baby care',
+    'family & health focused': '👨‍👩‍👧 family & health focused',
+    'family & baby care': '👨‍👩‍👧 family & health focused',
+    'snack & produce lovers': '🍿 snack & produce lovers',
     'drink & health focused': '🥤 drink & health focused',
 }
 
@@ -73,6 +76,15 @@ def _normalize_taste_label(raw_label):
         if key in normalized:
             return label
     return str(raw_label).strip()
+
+
+def _taste_filter_value(selected_label):
+    """Convert UI label (possibly emoji-prefixed) to DB-normalized taste label."""
+    normalized = str(selected_label or '').strip().lower()
+    for key, label in TASTE_LABELS.items():
+        if normalized == label:
+            return key
+    return normalized
 
 def show_segments():
     render_page_heading("Customer Segments")
@@ -292,6 +304,7 @@ def show_segments():
                 ORDER BY total_spent DESC
             """)
         else:
+            selected_taste = _taste_filter_value(selected_seg)
             customers = db.fetch_all(f"""
                 SELECT c.customer_id, c.first_name, c.email,
                        LOWER(TRIM(csa.{taste_col}::text)) as taste,
@@ -305,7 +318,7 @@ def show_segments():
                 GROUP BY c.customer_id, c.first_name, c.email,
                          LOWER(TRIM(csa.{taste_col}::text)), c.email_notification_enabled
                 ORDER BY total_spent DESC
-            """, [selected_seg.strip().lower()])
+            """, [selected_taste])
 
     if customers:
         df_c = pd.DataFrame(customers,
