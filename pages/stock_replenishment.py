@@ -50,6 +50,36 @@ ai_model = load_ai_supplier_model()
 
 SUPPLIER_METRICS_CSV = Path(__file__).resolve().parents[1] / "supplier_data_engineered.csv"
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_supplier_reliability_scores():
+    """Cache supplier reliability data for 1 hour to avoid N+1 API calls."""
+    try:
+        url = f"{SUPABASE_URL}/rest/v1/historical_intake_data?select=supplier_id,product_code,good_fulfillment&limit=10000"
+        res = requests.get(url, headers=HEADERS)
+        if res.status_code == 200:
+            return res.json() or []
+    except Exception:
+        pass
+    return []
+
+def calculate_supplier_score(supplier_id, product_code, reliability_data):
+    """Calculate live score from cached reliability data."""
+    live_score = 0
+    # Filter for this supplier-product combo
+    product_specific = [d for d in reliability_data if d.get('supplier_id') == supplier_id and d.get('product_code') == product_code]
+
+    if product_specific:
+        good_deliveries = sum(1 for d in product_specific if d.get('good_fulfillment') == True)
+        live_score = good_deliveries / len(product_specific)
+    else:
+        # Fall back to overall supplier reliability
+        supplier_all = [d for d in reliability_data if d.get('supplier_id') == supplier_id]
+        if supplier_all:
+            good_deliveries = sum(1 for d in supplier_all if d.get('good_fulfillment') == True)
+            live_score = good_deliveries / len(supplier_all)
+
+    return live_score
+
 @st.cache_data(show_spinner=False)
 def load_supplier_metrics(csv_path: Path | str = SUPPLIER_METRICS_CSV) -> pd.DataFrame:
     try:
@@ -342,45 +372,23 @@ def render_stock_replenishment():
                     allowed_supplier_ids = product_to_supplier_ids.get(product_code, [])
                     allowed_sup_names = [sup_id_to_name[sid] for sid in allowed_supplier_ids if sid in sup_id_to_name]
 
-                    # --- ⚡ LIVE DATABASE SUPPLIER SORTING ---
-                    product_name = o.get('product_name', 'Unknown')
+                    # --- ⚡ CACHED SUPPLIER RELIABILITY SCORING ---
                     if allowed_sup_names:
+                        reliability_data = fetch_supplier_reliability_scores()
                         scores = []
                         for sup_name in allowed_sup_names:
                             sup_id = sup_map.get(sup_name)
-                            live_score = 0
-                            try:
-                                # 1. Ask Supabase for this supplier's history with this specific product
-                                url = f"{SUPABASE_URL}/rest/v1/historical_intake_data?supplier_id=eq.{sup_id}&product_code=eq.{product_code}&select=good_fulfillment"
-                                res = requests.get(url, headers=HEADERS)
-                                
-                                if res.status_code == 200:
-                                    data = res.json()
-                                    if len(data) > 0:
-                                        # Calculate exact reliability percentage
-                                        good_deliveries = sum(1 for d in data if d.get('good_fulfillment') == True)
-                                        live_score = good_deliveries / len(data)
-                                    else:
-                                        # 2. If no history for this item, check their OVERALL reliability
-                                        url_all = f"{SUPABASE_URL}/rest/v1/historical_intake_data?supplier_id=eq.{sup_id}&select=good_fulfillment"
-                                        res_all = requests.get(url_all, headers=HEADERS)
-                                        if res_all.status_code == 200 and len(res_all.json()) > 0:
-                                            all_data = res_all.json()
-                                            good_deliveries = sum(1 for d in all_data if d.get('good_fulfillment') == True)
-                                            live_score = good_deliveries / len(all_data)
-                            except Exception:
-                                pass
-                                
+                            live_score = calculate_supplier_score(sup_id, product_code, reliability_data)
                             scores.append({'name': sup_name, 'score': live_score})
-                        
+
                         # Sort the most reliable supplier to the top!
                         scores.sort(key=lambda x: x['score'], reverse=True)
                         allowed_sup_names = [s['name'] for s in scores]
-                        
-                        # Show the Live Database Confidence Badge
+
+                        # Show the Cached Reliability Badge
                         if scores and scores[0]['score'] > 0:
                             best_score = scores[0]['score'] * 100
-                            st.markdown(f"<span style='font-size:0.75rem; color:#10b981; font-weight:bold'>⚡ Live Data: {best_score:.1f}% Reliable</span>", unsafe_allow_html=True)
+                            st.markdown(f"<span style='font-size:0.75rem; color:#10b981; font-weight:bold'>⚡ {best_score:.1f}% Reliable</span>", unsafe_allow_html=True)
                     # ------------------------------------
 
                     # --- UI DROPDOWN ---

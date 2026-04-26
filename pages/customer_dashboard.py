@@ -626,7 +626,7 @@ def show_customer_dashboard(customer_id):
                     f'<div class="card-meta" style="margin-top:8px;">'
                     f'{due_label} · Last bought {item["days_since_last"]} day(s) ago</div>'
                     f'<div class="card-note">'
-                    f'Flag source: {"prepared CSV" if is_csv_alert else "live purchase history"}</div>'
+                    f'Flag source: {"Historic basket data" if is_csv_alert else "live purchase history"}</div>'
                     f'<div class="card-note">'
                     f'Why: You usually rebuy this every ~{item["avg_gap_days"]} day(s).</div>'
                     f'</div>',
